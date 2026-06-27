@@ -1,0 +1,33 @@
+# Blueprint Render.com — déploie le backend Django + une base PostgreSQL gratuite
+# Utilisation : pousser ce repo sur GitHub, puis Render → New → Blueprint → sélectionner le repo.
+services:
+  - type: web
+    name: geocollect-backend
+    runtime: python
+    plan: free
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn config.wsgi:application"
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: geocollect-db
+          property: connectionString
+      # ⚠️ Mets ici l'URL de ton frontend déployé (Netlify/Vercel) après coup :
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://geocollect.netlify.app"
+      - key: CSRF_TRUSTED_ORIGINS
+        value: "https://geocollect.netlify.app"
+
+databases:
+  - name: geocollect-db
+    plan: free
+    databaseName: geocollect

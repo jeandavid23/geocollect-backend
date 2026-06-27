@@ -1,0 +1,79 @@
+version: '3.9'
+
+services:
+  # ─── PostgreSQL + PostGIS ───────────────────────────────────────────────────
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: geocollect_db
+    environment:
+      POSTGRES_DB: geocollect
+      POSTGRES_USER: geocollect
+      POSTGRES_PASSWORD: geocollect_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geocollect"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: geocollect_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # ─── Django API ────────────────────────────────────────────────────────────
+  api:
+    build: .
+    container_name: geocollect_api
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+      - media_data:/app/media
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=True
+      - DB_ENGINE=django.contrib.gis.db.backends.postgis
+      - DB_NAME=geocollect
+      - DB_USER=geocollect
+      - DB_PASSWORD=geocollect_secret
+      - DB_HOST=db
+      - DB_PORT=5432
+      - REDIS_URL=redis://redis:6379/0
+      - CORS_ALLOWED_ORIGINS=http://localhost:5173
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  # ─── Celery Worker ─────────────────────────────────────────────────────────
+  celery:
+    build: .
+    container_name: geocollect_celery
+    command: celery -A config worker --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      - DB_ENGINE=django.contrib.gis.db.backends.postgis
+      - DB_NAME=geocollect
+      - DB_USER=geocollect
+      - DB_PASSWORD=geocollect_secret
+      - DB_HOST=db
+      - DB_PORT=5432
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_data:
