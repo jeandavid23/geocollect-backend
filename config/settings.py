@@ -137,12 +137,14 @@ CORS_ALLOWED_ORIGINS = config(
     default='http://localhost:5173,https://localhost:5173,http://localhost:3000',
     cast=lambda v: [s.strip() for s in v.split(',')]
 )
-# Autorise aussi les adresses du réseau local (téléphone) en http/https, ex: https://192.168.1.18:5173
+# Autorise le réseau local (téléphone) + les hébergeurs Netlify/Vercel automatiquement
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r'^https?://localhost:\d+$',
     r'^https?://127\.0\.0\.1:\d+$',
     r'^https?://192\.168\.\d+\.\d+:\d+$',
     r'^https?://10\.\d+\.\d+\.\d+:\d+$',
+    r'^https://.*\.netlify\.app$',
+    r'^https://.*\.vercel\.app$',
 ]
 CORS_ALLOW_CREDENTIALS = True
 
@@ -173,7 +175,7 @@ CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
     default='https://localhost:5173',
     cast=lambda v: [s.strip() for s in v.split(',') if s.strip()],
-)
+) + ['https://*.netlify.app', 'https://*.vercel.app']
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 if not DEBUG:
     SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
