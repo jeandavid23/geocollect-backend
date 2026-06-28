@@ -166,6 +166,10 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
         section = validated_data.get('section', '')
         cooperative = validated_data.get('cooperative')
         index = get_next_producer_index(cooperative.id, section)
+        # field_id_base est unique : incrémente jusqu'à trouver une valeur libre
         field_id_base = generate_field_id_base(section, index)
+        while Producer.objects.filter(field_id_base=field_id_base).exists():
+            index += 1
+            field_id_base = generate_field_id_base(section, index)
         validated_data['field_id_base'] = field_id_base
         return super().create(validated_data)

@@ -67,7 +67,11 @@ class ParcelCreateSerializer(serializers.ModelSerializer):
         from utils.field_id import generate_parcel_field_id, get_next_parcel_index
         producer = validated_data['producer']
         index = get_next_parcel_index(producer.id)
-        validated_data['field_id'] = generate_parcel_field_id(producer.field_id_base, index)
+        field_id = generate_parcel_field_id(producer.field_id_base, index)
+        while Parcel.objects.filter(field_id=field_id).exists():
+            index += 1
+            field_id = generate_parcel_field_id(producer.field_id_base, index)
+        validated_data['field_id'] = field_id
         parcel = Parcel(**validated_data)
         parcel.save()
         parcel.run_eudr_validation()
