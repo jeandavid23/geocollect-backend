@@ -37,6 +37,11 @@ class CooperativeCreateSerializer(serializers.ModelSerializer):
         username = (validated_data.pop('login_username', '') or '').strip()
         password = (validated_data.pop('login_password', '') or '').strip()
 
+        # rccm est unique : génère une valeur unique si non fournie (évite la collision sur '')
+        if not (validated_data.get('rccm') or '').strip():
+            import uuid as _uuid
+            validated_data['rccm'] = f'AUTO-{_uuid.uuid4().hex[:10].upper()}'
+
         coop = Cooperative.objects.create(**validated_data)
 
         if not username:

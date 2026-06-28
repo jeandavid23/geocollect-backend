@@ -1,5 +1,10 @@
+import uuid
 from rest_framework import serializers
 from .models import Agent, Producer
+
+
+def _uuid_hex():
+    return uuid.uuid4().hex[:6].upper()
 
 
 class AgentCreateSerializer(serializers.ModelSerializer):
@@ -62,6 +67,15 @@ class AgentCreateSerializer(serializers.ModelSerializer):
         )
         user.set_password(password)
         user.save()
+
+        # code agent est unique : garantit l'unicité (évite la collision entre coops)
+        base_code = (validated_data.get('code') or '').strip() or f'AG-{_uuid_hex()}'
+        code = base_code
+        i = 1
+        while Agent.objects.filter(code=code).exists():
+            i += 1
+            code = f'{base_code}-{i}'
+        validated_data['code'] = code
 
         agent = Agent.objects.create(user=user, **validated_data)
 
