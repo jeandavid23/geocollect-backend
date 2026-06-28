@@ -33,6 +33,35 @@ class ParcelCreateSerializer(serializers.ModelSerializer):
             'culture', 'village', 'section', 'region', 'country',
             'mapping_started_at', 'mapping_ended_at', 'is_synced',
         ]
+        extra_kwargs = {
+            'cooperative': {'required': False},
+            'agent': {'required': False},
+            'region': {'required': False, 'allow_blank': True},
+            'country': {'required': False, 'allow_blank': True},
+            'village': {'required': False, 'allow_blank': True},
+            'section': {'required': False, 'allow_blank': True},
+        }
+
+    def validate(self, attrs):
+        # Auto-remplit agent + coopérative depuis le compte connecté (agent mappeur)
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user and getattr(user, 'role', None) == 'agent':
+            agent = getattr(user, 'agent_profile', None)
+            if agent:
+                attrs['agent'] = agent
+                attrs['cooperative'] = agent.cooperative
+        producer = attrs.get('producer')
+        if not attrs.get('cooperative') and producer:
+            attrs['cooperative'] = producer.cooperative
+        if not attrs.get('agent') and producer and producer.assigned_agent:
+            attrs['agent'] = producer.assigned_agent
+        if producer:
+            attrs.setdefault('village', producer.village)
+            attrs.setdefault('section', producer.section)
+            attrs.setdefault('region', producer.region)
+            attrs.setdefault('country', producer.country)
+        return attrs
 
     def create(self, validated_data):
         from utils.field_id import generate_parcel_field_id, get_next_parcel_index
@@ -43,6 +72,10 @@ class ParcelCreateSerializer(serializers.ModelSerializer):
         parcel.save()
         parcel.run_eudr_validation()
         return parcel
+
+    def to_representation(self, instance):
+        # Renvoie la parcelle complète (field_id, eudr_score, geometry…) après création
+        return ParcelSerializer(instance, context=self.context).data
 
 
 class ParcelListSerializer(serializers.ModelSerializer):

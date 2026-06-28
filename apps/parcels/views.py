@@ -18,7 +18,8 @@ class ParcelListCreateView(generics.ListCreateAPIView):
     ordering_fields = ['created_at', 'area_hectares', 'eudr_score']
 
     def get_serializer_class(self):
-        return ParcelCreateSerializer if self.request.method == 'POST' else ParcelListSerializer
+        # GET → serializer complet (avec geometry, pour les cartes)
+        return ParcelCreateSerializer if self.request.method == 'POST' else ParcelSerializer
 
     def get_permissions(self):
         return [IsAgentOrAbove()]

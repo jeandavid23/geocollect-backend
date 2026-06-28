@@ -120,10 +120,32 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Producer
         fields = [
-            'cooperative', 'assigned_agent', 'first_name', 'last_name',
-            'phone', 'national_id', 'gender', 'birth_year',
+            'id', 'cooperative', 'assigned_agent', 'field_id_base',
+            'first_name', 'last_name', 'phone', 'national_id', 'gender', 'birth_year',
             'village', 'section', 'region', 'country',
         ]
+        read_only_fields = ['id', 'field_id_base']
+        extra_kwargs = {
+            'cooperative': {'required': False},
+            'assigned_agent': {'required': False},
+            'region': {'required': False, 'allow_blank': True},
+            'country': {'required': False, 'allow_blank': True},
+        }
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user:
+            if user.role == 'cooperative':
+                attrs['cooperative'] = user.cooperative
+            elif user.role == 'agent':
+                agent = getattr(user, 'agent_profile', None)
+                if agent:
+                    attrs['cooperative'] = agent.cooperative
+                    attrs.setdefault('assigned_agent', agent)
+        if not attrs.get('cooperative'):
+            raise serializers.ValidationError({'cooperative': 'Coopérative requise.'})
+        return attrs
 
     def create(self, validated_data):
         from utils.field_id import generate_field_id_base, get_next_producer_index
