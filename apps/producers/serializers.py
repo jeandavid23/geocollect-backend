@@ -87,6 +87,17 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             cooperative_name=cooperative.name, code=agent.code,
         )
 
+        # Notifie la coopérative + super admins
+        try:
+            from apps.accounts.notify import notify_cooperative
+            notify_cooperative(
+                cooperative, ntype='info',
+                title=f'Nouvel agent mappeur — {full_name}',
+                message=f'Code {agent.code} · zone {agent.zone or "—"}',
+            )
+        except Exception:
+            pass
+
         agent._account_username = username
         agent._account_password = password
         return agent
@@ -172,4 +183,15 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
             index += 1
             field_id_base = generate_field_id_base(section, index)
         validated_data['field_id_base'] = field_id_base
-        return super().create(validated_data)
+        producer = super().create(validated_data)
+        # Notifie la coopérative + super admins
+        try:
+            from apps.accounts.notify import notify_cooperative
+            notify_cooperative(
+                producer.cooperative, ntype='info',
+                title=f'Nouveau producteur — {producer.full_name}',
+                message=f'{producer.field_id_base} · {producer.village} · {producer.section}',
+            )
+        except Exception:
+            pass
+        return producer

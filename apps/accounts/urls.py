@@ -13,4 +13,6 @@ urlpatterns = [
     path('users/<uuid:pk>/toggle/', views.ToggleUserActiveView.as_view(), name='user_toggle'),
     path('users/<uuid:pk>/reset-password/', views.ResetPasswordView.as_view(), name='user_reset_password'),
     path('logs/', views.ActivityLogListView.as_view(), name='activity_logs'),
+    path('notifications/', views.NotificationListView.as_view(), name='notifications'),
+    path('notifications/read/', views.NotificationMarkReadView.as_view(), name='notifications_read'),
 ]

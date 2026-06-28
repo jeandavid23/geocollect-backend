@@ -4,10 +4,11 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import User, ActivityLog
+from .models import User, ActivityLog, Notification
 from .serializers import (
     CustomTokenObtainPairSerializer, UserSerializer,
     UserCreateSerializer, ChangePasswordSerializer, ActivityLogSerializer,
+    NotificationSerializer,
 )
 from .permissions import IsSuperAdmin
 
@@ -140,3 +141,20 @@ class ActivityLogListView(generics.ListAPIView):
         if user_id:
             qs = qs.filter(user_id=user_id)
         return qs
+
+
+class NotificationListView(generics.ListAPIView):
+    """Notifications de l'utilisateur connecté (le super admin reçoit tout via notify_cooperative)."""
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Notification.objects.filter(recipient=self.request.user)[:100]
+
+
+class NotificationMarkReadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
+        return Response({'detail': 'Notifications marquées comme lues.'})

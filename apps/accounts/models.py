@@ -32,6 +32,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     phone = models.CharField(max_length=20, blank=True)
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.AGENT)
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
+    # Profil (stockés en base pour survivre aux redéploiements Render)
+    national_id = models.CharField(max_length=100, blank=True, verbose_name="Pièce d'identité")
+    photo_data = models.TextField(blank=True, verbose_name='Photo (base64)')
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     cooperative = models.ForeignKey(
@@ -86,3 +89,28 @@ class ActivityLog(models.Model):
 
     def __str__(self):
         return f'{self.user} — {self.action} — {self.timestamp}'
+
+
+class Notification(models.Model):
+    class Type(models.TextChoices):
+        SUCCESS = 'success', 'Succès'
+        INFO = 'info', 'Info'
+        WARNING = 'warning', 'Avertissement'
+        ERROR = 'error', 'Erreur'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    cooperative = models.ForeignKey('cooperatives.Cooperative', null=True, blank=True,
+                                    on_delete=models.SET_NULL, related_name='notifications')
+    type = models.CharField(max_length=20, choices=Type.choices, default=Type.INFO)
+    title = models.CharField(max_length=200)
+    message = models.TextField(blank=True)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Notification'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.recipient} — {self.title}'

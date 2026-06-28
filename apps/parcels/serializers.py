@@ -75,6 +75,16 @@ class ParcelCreateSerializer(serializers.ModelSerializer):
         parcel = Parcel(**validated_data)
         parcel.save()
         parcel.run_eudr_validation()
+        # Notifie la coopérative + super admins
+        try:
+            from apps.accounts.notify import notify_cooperative
+            notify_cooperative(
+                parcel.cooperative, ntype='success',
+                title=f'Nouvelle parcelle mappée — {parcel.field_id}',
+                message=f'{parcel.area_hectares} ha · {parcel.culture} · {parcel.village} · EUDR {parcel.eudr_score}%',
+            )
+        except Exception:
+            pass
         return parcel
 
     def to_representation(self, instance):

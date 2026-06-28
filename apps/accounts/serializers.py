@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import User, ActivityLog
+from .models import User, ActivityLog, Notification
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -21,10 +21,11 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'username', 'email', 'full_name', 'phone',
+            'national_id', 'photo_data',
             'role', 'is_active', 'cooperative_id', 'cooperative_name',
             'created_at',
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'created_at', 'role', 'is_active']
 
     def get_cooperative_id(self, obj):
         return str(obj.cooperative_id) if obj.cooperative_id else None
@@ -65,3 +66,12 @@ class ActivityLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = ActivityLog
         fields = ['id', 'user_name', 'action', 'resource', 'resource_id', 'details', 'ip_address', 'timestamp']
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    cooperative_name = serializers.CharField(source='cooperative.name', read_only=True, default=None)
+
+    class Meta:
+        model = Notification
+        fields = ['id', 'type', 'title', 'message', 'is_read', 'cooperative_name', 'created_at']
+        read_only_fields = fields
