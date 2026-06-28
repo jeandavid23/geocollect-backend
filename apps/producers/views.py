@@ -49,12 +49,9 @@ class ProducerListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         qs = Producer.objects.select_related('cooperative', 'assigned_agent__user')
         user = self.request.user
-        if user.role == 'cooperative':
-            qs = qs.filter(cooperative=user.cooperative)
-        elif user.role == 'agent':
-            agent = getattr(user, 'agent_profile', None)
-            if agent:
-                qs = qs.filter(assigned_agent=agent)
+        # Coopérative ET agent voient TOUS les producteurs de la coopérative
+        if user.role in ('cooperative', 'agent') and user.cooperative_id:
+            qs = qs.filter(cooperative_id=user.cooperative_id)
         return qs
 
 
