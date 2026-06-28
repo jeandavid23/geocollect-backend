@@ -87,6 +87,49 @@ class ToggleUserActiveView(APIView):
         return Response({'is_active': user.is_active})
 
 
+class ResetPasswordView(APIView):
+    """Régénère un mot de passe. Super admin → tout le monde ;
+    Coopérative → ses propres agents uniquement. Renvoie le nouveau mot de passe."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        from .credentials import generate_password
+        target = generics.get_object_or_404(User, pk=pk)
+        requester = request.user
+
+        allowed = (
+            requester.role == 'super_admin'
+            or (requester.role == 'cooperative'
+                and target.role == 'agent'
+                and target.cooperative_id == requester.cooperative_id)
+        )
+        if not allowed:
+            return Response({'detail': 'Action non autorisée.'}, status=status.HTTP_403_FORBIDDEN)
+
+        new_password = generate_password()
+        target.set_password(new_password)
+        target.save()
+        ActivityLog.objects.create(
+            user=requester, action='reset_password', resource='user',
+            resource_id=str(target.id), ip_address=request.META.get('REMOTE_ADDR'),
+        )
+        # Renvoie aussi par email si une adresse existe
+        try:
+            from .emails import send_credentials_email
+            send_credentials_email(
+                to_email=target.email, full_name=target.full_name,
+                role_label=target.get_role_display(),
+                username=target.username, password=new_password,
+            )
+        except Exception:
+            pass
+        return Response({
+            'username': target.username,
+            'new_password': new_password,
+            'full_name': target.full_name,
+        })
+
+
 class ActivityLogListView(generics.ListAPIView):
     serializer_class = ActivityLogSerializer
     permission_classes = [IsSuperAdmin]

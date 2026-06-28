@@ -55,6 +55,13 @@ class CooperativeCreateSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
 
+        # Email de confirmation avec les accès
+        from apps.accounts.emails import send_credentials_email
+        send_credentials_email(
+            to_email=coop.email, full_name=coop.name, role_label='Coopérative',
+            username=username, password=password,
+        )
+
         coop._account_username = username
         coop._account_password = password
         return coop

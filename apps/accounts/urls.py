@@ -11,5 +11,6 @@ urlpatterns = [
     path('users/', views.UserListCreateView.as_view(), name='user_list'),
     path('users/<uuid:pk>/', views.UserDetailView.as_view(), name='user_detail'),
     path('users/<uuid:pk>/toggle/', views.ToggleUserActiveView.as_view(), name='user_toggle'),
+    path('users/<uuid:pk>/reset-password/', views.ResetPasswordView.as_view(), name='user_reset_password'),
     path('logs/', views.ActivityLogListView.as_view(), name='activity_logs'),
 ]

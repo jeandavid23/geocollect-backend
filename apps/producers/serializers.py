@@ -64,6 +64,15 @@ class AgentCreateSerializer(serializers.ModelSerializer):
         user.save()
 
         agent = Agent.objects.create(user=user, **validated_data)
+
+        # Email de confirmation avec les accès
+        from apps.accounts.emails import send_credentials_email
+        send_credentials_email(
+            to_email=email, full_name=full_name, role_label='Agent Mappeur',
+            username=username, password=password,
+            cooperative_name=cooperative.name, code=agent.code,
+        )
+
         agent._account_username = username
         agent._account_password = password
         return agent
