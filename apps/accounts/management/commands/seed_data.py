@@ -54,35 +54,42 @@ class Command(BaseCommand):
 
         coop = self.coops['COOPACI BEOUMI']
 
-        # Super Admin
+        # Super Admin — toujours (ré)initialisé pour garantir l'accès
         admin, _ = User.objects.get_or_create(
             username='admin',
             defaults=dict(full_name='Super Administrateur', role='super_admin',
                           email='admin@geocollect.ci', is_staff=True, is_superuser=True)
         )
-        if _:
-            admin.set_password('admin123')
-            admin.save()
+        admin.role = 'super_admin'
+        admin.is_staff = True
+        admin.is_superuser = True
+        admin.is_active = True
+        admin.set_password('admin123')
+        admin.save()
 
-        # Cooperative user
+        # Cooperative user — toujours réinitialisé
         coop_user, _ = User.objects.get_or_create(
             username='coop',
             defaults=dict(full_name='COOP CACAO BEOUMI', role='cooperative',
                           email='coop@geocollect.ci', cooperative=coop)
         )
-        if _:
-            coop_user.set_password('coop123')
-            coop_user.save()
+        coop_user.role = 'cooperative'
+        coop_user.cooperative = coop
+        coop_user.is_active = True
+        coop_user.set_password('coop123')
+        coop_user.save()
 
-        # Agent
+        # Agent — toujours réinitialisé
         agent_user, _ = User.objects.get_or_create(
             username='agent',
             defaults=dict(full_name='Kouassi Bernard', role='agent',
                           email='agent@geocollect.ci', cooperative=coop)
         )
-        if _:
-            agent_user.set_password('agent123')
-            agent_user.save()
+        agent_user.role = 'agent'
+        agent_user.cooperative = coop
+        agent_user.is_active = True
+        agent_user.set_password('agent123')
+        agent_user.save()
 
         # Agent profile
         self.agent, _ = Agent.objects.get_or_create(
