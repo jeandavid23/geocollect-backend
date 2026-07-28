@@ -133,12 +133,30 @@ class ProducerSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'cooperative', 'cooperative_name',
             'assigned_agent', 'assigned_agent_name',
-            'field_id_base', 'first_name', 'last_name', 'full_name',
-            'phone', 'national_id', 'gender', 'birth_year',
-            'village', 'section', 'region', 'country',
+            'field_id_base', 'full_name',
+            # Exploitation
+            'national_farm_id', 'village', 'district', 'region', 'section',
+            'total_area_ha', 'farm_type', 'num_units', 'certification_year', 'country',
+            # Opérateur
+            'first_name', 'last_name', 'phone', 'national_id', 'gender', 'birth_year',
+            # Propriétaire
+            'owner_first_name', 'owner_last_name', 'owner_phone', 'owner_national_id', 'owner_gender',
+            # Travailleurs
+            'permanent_workers', 'temporary_workers',
+            # Inspection
+            'inspector_name', 'inspection_year', 'inspection_month', 'inspection_day',
             'is_active', 'parcel_count', 'total_hectares', 'created_at',
         ]
         read_only_fields = ['id', 'field_id_base', 'created_at']
+
+
+GMR_OPTIONAL = [
+    'national_farm_id', 'district', 'total_area_ha', 'farm_type', 'num_units',
+    'certification_year', 'owner_first_name', 'owner_last_name', 'owner_phone',
+    'owner_national_id', 'owner_gender', 'permanent_workers', 'temporary_workers',
+    'inspector_name', 'inspection_year', 'inspection_month', 'inspection_day',
+    'phone', 'national_id', 'birth_year', 'region', 'country', 'village',
+]
 
 
 class ProducerCreateSerializer(serializers.ModelSerializer):
@@ -146,15 +164,30 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
         model = Producer
         fields = [
             'id', 'cooperative', 'assigned_agent', 'field_id_base',
+            # Exploitation
+            'national_farm_id', 'village', 'district', 'region', 'section',
+            'total_area_ha', 'farm_type', 'num_units', 'certification_year', 'country',
+            # Opérateur
             'first_name', 'last_name', 'phone', 'national_id', 'gender', 'birth_year',
-            'village', 'section', 'region', 'country',
+            # Propriétaire
+            'owner_first_name', 'owner_last_name', 'owner_phone', 'owner_national_id', 'owner_gender',
+            # Travailleurs
+            'permanent_workers', 'temporary_workers',
+            # Inspection
+            'inspector_name', 'inspection_year', 'inspection_month', 'inspection_day',
         ]
         read_only_fields = ['id', 'field_id_base']
         extra_kwargs = {
             'cooperative': {'required': False},
             'assigned_agent': {'required': False},
-            'region': {'required': False, 'allow_blank': True},
-            'country': {'required': False, 'allow_blank': True},
+            **{f: {'required': False, 'allow_blank': True} for f in
+               ['national_farm_id', 'district', 'region', 'country', 'village',
+                'phone', 'national_id', 'owner_first_name', 'owner_last_name',
+                'owner_phone', 'owner_national_id', 'owner_gender', 'inspector_name']},
+            **{f: {'required': False} for f in
+               ['total_area_ha', 'num_units', 'certification_year', 'birth_year',
+                'permanent_workers', 'temporary_workers', 'farm_type',
+                'inspection_year', 'inspection_month', 'inspection_day']},
         }
 
     def validate(self, attrs):

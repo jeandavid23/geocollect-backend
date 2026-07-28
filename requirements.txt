@@ -5,6 +5,7 @@ django-cors-headers==4.4.0
 django-filter==24.1
 python-decouple==3.8
 Pillow==10.4.0
+earthengine-api==1.4.3
 celery==5.3.6
 redis==5.0.8
 # Production
