@@ -86,6 +86,12 @@ elif config('DB_ENGINE', default='') == 'django.contrib.gis.db.backends.postgis'
         }
     }
 else:
+    if not DEBUG:
+        # En production, SQLite serait effacé à chaque redéploiement : on refuse de démarrer.
+        from django.core.exceptions import ImproperlyConfigured
+        raise ImproperlyConfigured(
+            "DATABASE_URL manquante : configurez une base PostgreSQL (Render, Neon, Supabase...)."
+        )
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
