@@ -27,6 +27,14 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'role', 'is_active']
 
+    def validate_photo_data(self, value):
+        # photo de profil en base64 : 2 Mo maximum (évite de saturer la base)
+        if value and len(value) > 2_800_000:
+            raise serializers.ValidationError('Photo trop volumineuse (2 Mo maximum).')
+        if value and not value.startswith('data:image/'):
+            raise serializers.ValidationError('Format de photo invalide.')
+        return value
+
     def get_cooperative_id(self, obj):
         return str(obj.cooperative_id) if obj.cooperative_id else None
 
@@ -35,7 +43,12 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=6)
+    password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_password(self, value):
+        from django.contrib.auth.password_validation import validate_password
+        validate_password(value)
+        return value
 
     class Meta:
         model = User
@@ -51,7 +64,12 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(required=True)
-    new_password = serializers.CharField(required=True, min_length=6)
+    new_password = serializers.CharField(required=True, min_length=8)
+
+    def validate_new_password(self, value):
+        from django.contrib.auth.password_validation import validate_password
+        validate_password(value, self.context['request'].user)
+        return value
 
     def validate_old_password(self, value):
         user = self.context['request'].user

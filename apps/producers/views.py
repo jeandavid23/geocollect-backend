@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Agent, Producer
 from .serializers import AgentSerializer, AgentCreateSerializer, ProducerSerializer, ProducerCreateSerializer
-from apps.accounts.permissions import IsSuperAdmin, IsCooperativeOrAdmin, IsAgentOrAbove, resolve_cooperative
+from apps.accounts.permissions import IsSuperAdmin, IsCooperativeOrAdmin, IsAgentOrAbove, resolve_cooperative, scope_to_cooperative
 from utils.field_id import generate_field_id_base, get_next_producer_index
 
 
@@ -40,9 +40,18 @@ class AgentListCreateView(generics.ListCreateAPIView):
 
 
 class AgentDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Agent.objects.select_related('user', 'cooperative')
     serializer_class = AgentSerializer
     permission_classes = [IsCooperativeOrAdmin]
+
+    def get_queryset(self):
+        # une coopérative ne peut agir que sur SES agents
+        return scope_to_cooperative(Agent.objects.select_related('user', 'cooperative'), self.request.user)
+
+    def perform_update(self, serializer):
+        # la coopérative d'un agent ne peut pas être changée par une coopérative
+        if self.request.user.role != 'super_admin':
+            serializer.validated_data.pop('cooperative', None)
+        serializer.save()
 
 
 class ProducerListCreateView(generics.ListCreateAPIView):
@@ -69,8 +78,17 @@ class ProducerListCreateView(generics.ListCreateAPIView):
 
 
 class ProducerDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Producer.objects.select_related('cooperative', 'assigned_agent__user')
     permission_classes = [IsAgentOrAbove]
+
+    def get_queryset(self):
+        return scope_to_cooperative(
+            Producer.objects.select_related('cooperative', 'assigned_agent__user'), self.request.user)
+
+    def get_permissions(self):
+        # suppression réservée à la coopérative et à l'admin
+        if self.request.method == 'DELETE':
+            return [IsCooperativeOrAdmin()]
+        return [IsAgentOrAbove()]
 
     def get_serializer_class(self):
         return ProducerCreateSerializer if self.request.method in ('PUT', 'PATCH') else ProducerSerializer

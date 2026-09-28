@@ -46,11 +46,22 @@ class ParcelCreateSerializer(serializers.ModelSerializer):
         # Auto-remplit agent + coopérative depuis le compte connecté (agent mappeur)
         request = self.context.get('request')
         user = getattr(request, 'user', None)
-        if user and getattr(user, 'role', None) == 'agent':
+        role = getattr(user, 'role', None)
+        if role == 'agent':
             agent = getattr(user, 'agent_profile', None)
             if agent:
                 attrs['agent'] = agent
                 attrs['cooperative'] = agent.cooperative
+        elif role == 'cooperative':
+            attrs['cooperative'] = user.cooperative
+        # Cloisonnement : producteur et agent doivent appartenir à la coopérative de l'utilisateur
+        if role in ('agent', 'cooperative'):
+            producer = attrs.get('producer') or getattr(self.instance, 'producer', None)
+            if producer is not None and producer.cooperative_id != user.cooperative_id:
+                raise serializers.ValidationError({'producer': 'Producteur inconnu.'})
+            agent = attrs.get('agent')
+            if agent is not None and agent.cooperative_id != user.cooperative_id:
+                raise serializers.ValidationError({'agent': 'Agent inconnu.'})
         producer = attrs.get('producer')
         if not attrs.get('cooperative') and producer:
             attrs['cooperative'] = producer.cooperative

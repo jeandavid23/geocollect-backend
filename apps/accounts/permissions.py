@@ -42,3 +42,15 @@ def resolve_cooperative(request, source=None):
     if not coop_id:
         return None
     return Cooperative.objects.filter(pk=coop_id).first()
+
+
+def scope_to_cooperative(qs, user, field='cooperative_id'):
+    """
+    Cloisonnement : une coopérative ou un agent ne voit QUE les objets de sa coopérative
+    (sinon 404, comme si l'objet n'existait pas). Le super admin voit tout.
+    """
+    if getattr(user, 'role', None) == 'super_admin':
+        return qs
+    if not getattr(user, 'cooperative_id', None):
+        return qs.none()
+    return qs.filter(**{field: user.cooperative_id})

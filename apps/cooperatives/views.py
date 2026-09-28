@@ -2,7 +2,7 @@ from rest_framework import generics, permissions, filters
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Cooperative
 from .serializers import CooperativeSerializer, CooperativeListSerializer, CooperativeCreateSerializer
-from apps.accounts.permissions import IsSuperAdmin, IsCooperativeOrAdmin, BelongsToCooperative
+from apps.accounts.permissions import IsSuperAdmin, IsCooperativeOrAdmin, BelongsToCooperative, scope_to_cooperative
 
 
 class CooperativeListCreateView(generics.ListCreateAPIView):
@@ -30,8 +30,11 @@ class CooperativeListCreateView(generics.ListCreateAPIView):
 
 
 class CooperativeDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Cooperative.objects.all()
     serializer_class = CooperativeSerializer
+
+    def get_queryset(self):
+        # une coopérative ne lit que sa propre fiche
+        return scope_to_cooperative(Cooperative.objects.all(), self.request.user, field='id')
 
     def get_permissions(self):
         if self.request.method in ('PUT', 'PATCH', 'DELETE'):

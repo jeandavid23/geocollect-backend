@@ -70,6 +70,14 @@ class AgentCreateSerializer(serializers.ModelSerializer):
         phone = (validated_data.pop('phone', '') or '').strip()
         username = (validated_data.pop('login_username', '') or '').strip()
         password = (validated_data.pop('login_password', '') or '').strip()
+        if password:
+            # mot de passe choisi à la main : mêmes règles que partout (8 caractères, pas trop courant)
+            from django.contrib.auth.password_validation import validate_password
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            try:
+                validate_password(password)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({'login_password': list(exc.messages)})
         cooperative = validated_data['cooperative']
 
         if not username:
@@ -222,8 +230,14 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
                 if agent:
                     attrs['cooperative'] = agent.cooperative
                     attrs.setdefault('assigned_agent', agent)
-        if not attrs.get('cooperative'):
+        if user and user.role in ('cooperative', 'agent') and self.instance is not None:
+            attrs['cooperative'] = self.instance.cooperative   # pas de changement de coopérative
+        coop = attrs.get('cooperative') or getattr(self.instance, 'cooperative', None)
+        if not coop:
             raise serializers.ValidationError({'cooperative': 'Coopérative requise.'})
+        agent = attrs.get('assigned_agent')
+        if agent is not None and agent.cooperative_id != coop.id:
+            raise serializers.ValidationError({'assigned_agent': 'Agent inconnu.'})
         return attrs
 
     def create(self, validated_data):

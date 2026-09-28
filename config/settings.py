@@ -4,8 +4,13 @@ from decouple import config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-geocollect-eudr-dev-key-change-in-production')
+_DEV_SECRET = 'django-insecure-geocollect-eudr-dev-key-change-in-production'
+SECRET_KEY = config('SECRET_KEY', default=_DEV_SECRET)
 DEBUG = config('DEBUG', default=True, cast=bool)
+if not DEBUG and (SECRET_KEY == _DEV_SECRET or len(SECRET_KEY) < 32):
+    # Sans vraie clé, les jetons de connexion pourraient être forgés : on refuse de démarrer
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured('SECRET_KEY absente ou trop courte en production.')
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=lambda v: [s.strip() for s in v.split(',')])
 
 # ─── Apps ──────────────────────────────────────────────────────────────────────
@@ -129,12 +134,24 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
     ),
+    # Limitation de débit : bloque la devinette de mots de passe et les abus
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '60/min',
+        'user': '600/min',        # imports et analyses par lots : ~40 appels en quelques minutes
+        'login': '10/min',        # tentatives de connexion par adresse IP
+        'password': '5/min',
+    },
 }
 
 # ─── JWT ───────────────────────────────────────────────────────────────────────
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=2),   # renouvelé automatiquement par le navigateur
     'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
@@ -149,17 +166,17 @@ CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
     default='http://localhost:5173,https://localhost:5173,http://localhost:3000',
     cast=lambda v: [s.strip() for s in v.split(',')]
-)
-# Autorise le réseau local (téléphone) + les hébergeurs Netlify/Vercel automatiquement
+) + ['https://sunny-pegasus-8ea076.netlify.app']   # site de production (même si la variable manque)
+# En développement seulement : réseau local (téléphone). En production, seules les origines
+# de CORS_ALLOWED_ORIGINS (le site Netlify) sont acceptées — plus de joker *.netlify.app.
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r'^https?://localhost:\d+$',
     r'^https?://127\.0\.0\.1:\d+$',
     r'^https?://192\.168\.\d+\.\d+:\d+$',
     r'^https?://10\.\d+\.\d+\.\d+:\d+$',
-    r'^https://.*\.netlify\.app$',
-    r'^https://.*\.vercel\.app$',
-]
-CORS_ALLOW_CREDENTIALS = True
+] if DEBUG else []
+# Authentification par jeton (en-tête Authorization) : aucun cookie à partager entre sites
+CORS_ALLOW_CREDENTIALS = False
 # Le Polygon Validator envoie les gros fichiers compressés (Content-Encoding: gzip)
 from corsheaders.defaults import default_headers  # noqa: E402
 CORS_ALLOW_HEADERS = (*default_headers, 'content-encoding')
@@ -191,12 +208,21 @@ CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
     default='https://localhost:5173',
     cast=lambda v: [s.strip() for s in v.split(',') if s.strip()],
-) + ['https://*.netlify.app', 'https://*.vercel.app']
+) + ['https://sunny-pegasus-8ea076.netlify.app']
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+X_FRAME_OPTIONS = 'DENY'
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'same-origin'
+SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
 if not DEBUG:
-    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
+    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=True, cast=bool)
+    SECURE_REDIRECT_EXEMPT = [r'^$']          # contrôle de santé de Render
+    SECURE_HSTS_SECONDS = 31536000            # HTTPS obligatoire pendant 1 an
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False    # sous-domaines onrender.com : hors de notre contrôle
     SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
     CSRF_COOKIE_SECURE = True
+    CSRF_COOKIE_HTTPONLY = True
 
 # ─── Email (confirmation d'inscription + accès) ─────────────────────────────────
 # Si EMAIL_HOST_USER est défini → SMTP réel. Sinon → console (les emails s'affichent dans les logs).
@@ -219,7 +245,10 @@ FRONTEND_URL = config('FRONTEND_URL', default='https://sunny-pegasus-8ea076.netl
 # ─── Passwords ────────────────────────────────────────────────────────────────
 
 AUTH_PASSWORD_VALIDATORS = [
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 6}},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 8}},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
 ]
 
 # ─── i18n ─────────────────────────────────────────────────────────────────────

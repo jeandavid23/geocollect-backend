@@ -8,7 +8,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 
 from .models import Parcel
 from .serializers import ParcelSerializer, ParcelCreateSerializer, ParcelListSerializer, ParcelGeoJSONSerializer
-from apps.accounts.permissions import IsAgentOrAbove, IsCooperativeOrAdmin
+from apps.accounts.permissions import IsAgentOrAbove, IsCooperativeOrAdmin, scope_to_cooperative
 
 
 class ParcelListCreateView(generics.ListCreateAPIView):
@@ -35,8 +35,16 @@ class ParcelListCreateView(generics.ListCreateAPIView):
 
 
 class ParcelDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Parcel.objects.select_related('producer', 'cooperative', 'agent__user')
     permission_classes = [IsAgentOrAbove]
+
+    def get_queryset(self):
+        return scope_to_cooperative(
+            Parcel.objects.select_related('producer', 'cooperative', 'agent__user'), self.request.user)
+
+    def get_permissions(self):
+        if self.request.method == 'DELETE':
+            return [IsCooperativeOrAdmin()]
+        return [IsAgentOrAbove()]
 
     def get_serializer_class(self):
         return ParcelCreateSerializer if self.request.method in ('PUT', 'PATCH') else ParcelSerializer
@@ -47,7 +55,7 @@ class ParcelValidateView(APIView):
     permission_classes = [IsCooperativeOrAdmin]
 
     def post(self, request, pk):
-        parcel = generics.get_object_or_404(Parcel, pk=pk)
+        parcel = generics.get_object_or_404(scope_to_cooperative(Parcel.objects.all(), request.user), pk=pk)
         result = parcel.run_eudr_validation()
         return Response({
             'eudr_score': parcel.eudr_score,
@@ -118,7 +126,7 @@ class SyncParcelsView(APIView):
         errors = []
 
         for item in parcels_data:
-            serializer = ParcelCreateSerializer(data=item)
+            serializer = ParcelCreateSerializer(data=item, context={'request': request})
             if serializer.is_valid():
                 parcel = serializer.save()
                 created.append(str(parcel.id))

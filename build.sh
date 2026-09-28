@@ -5,14 +5,10 @@ set -o errexit
 pip install -r requirements.txt
 python manage.py collectstatic --no-input
 python manage.py migrate
-# Crée les comptes de démo (admin/coop/agent) si absents
-python manage.py seed_data || true
 
-# Garantit l'accès admin (admin/admin123) même si le seed a échoué
-python manage.py shell -c "
-from apps.accounts.models import User
-u, _ = User.objects.get_or_create(username='admin', defaults={'full_name':'Super Administrateur','role':'super_admin','is_staff':True,'is_superuser':True})
-u.role='super_admin'; u.is_active=True; u.is_staff=True; u.is_superuser=True
-u.set_password('admin123'); u.save()
-print('✓ admin réinitialisé')
-" || true
+# Comptes de démonstration (admin/coop/agent) : UNIQUEMENT si SEED_DEMO_DATA=True.
+# Sécurité : aucun mot de passe n'est plus réinitialisé automatiquement à chaque déploiement
+# (l'ancien script remettait admin/admin123, affiché publiquement : accès super admin pour tous).
+if [ "${SEED_DEMO_DATA:-False}" = "True" ]; then
+  python manage.py seed_data || true
+fi

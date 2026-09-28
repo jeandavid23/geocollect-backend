@@ -36,6 +36,14 @@ class CooperativeCreateSerializer(serializers.ModelSerializer):
 
         username = (validated_data.pop('login_username', '') or '').strip()
         password = (validated_data.pop('login_password', '') or '').strip()
+        if password:
+            # mot de passe choisi à la main : mêmes règles que partout (8 caractères, pas trop courant)
+            from django.contrib.auth.password_validation import validate_password
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            try:
+                validate_password(password)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({'login_password': list(exc.messages)})
 
         # rccm est unique : génère une valeur unique si non fournie (évite la collision sur '')
         if not (validated_data.get('rccm') or '').strip():

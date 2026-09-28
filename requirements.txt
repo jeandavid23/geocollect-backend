@@ -4,7 +4,7 @@ djangorestframework-simplejwt==5.3.1
 django-cors-headers==4.4.0
 django-filter==24.1
 python-decouple==3.8
-Pillow==10.4.0
+Pillow==12.3.0
 # Analyse géospatiale (déforestation Hansen, Polygon Validator) — paquets précompilés Python 3.11 à 3.13
 rasterio==1.4.4
 numpy==2.4.6

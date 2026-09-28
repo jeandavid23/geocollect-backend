@@ -15,6 +15,7 @@ from .permissions import IsSuperAdmin
 
 class LoginView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+    throttle_scope = 'login'   # 10 tentatives / minute / adresse IP
 
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
@@ -55,6 +56,7 @@ class MeView(generics.RetrieveUpdateAPIView):
 
 class ChangePasswordView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'password'
 
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
