@@ -68,3 +68,29 @@ class Parcel(models.Model):
         self.status = self.Status.VALIDATED if result['is_valid'] else self.Status.REJECTED
         self.save(update_fields=['eudr_score', 'eudr_status', 'validation_result', 'status', 'updated_at'])
         return result
+
+
+class LegacyParcel(models.Model):
+    """
+    Ancien polygone de la coopérative, importé d'un fichier existant (KML, GeoPackage, Shapefile, GeoJSON).
+    Affiché sur les cartes à côté des parcelles mappées par les agents ; aucune validation EUDR.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    cooperative = models.ForeignKey('cooperatives.Cooperative', on_delete=models.CASCADE, related_name='legacy_parcels')
+    name = models.CharField(max_length=255, blank=True, verbose_name='Nom')
+    geometry = models.JSONField(verbose_name='Géométrie GeoJSON (WGS84)')
+    # Attributs d'origine du fichier (table attributaire)
+    properties = models.JSONField(default=dict, blank=True, verbose_name='Attributs')
+    area_hectares = models.FloatField(null=True, blank=True, verbose_name='Superficie (ha)')
+    source_file = models.CharField(max_length=255, blank=True, verbose_name='Fichier source')
+    uploaded_by = models.ForeignKey('accounts.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Ancien polygone'
+        verbose_name_plural = 'Anciens polygones'
+        ordering = ['source_file', 'name']
+        indexes = [models.Index(fields=['cooperative', 'source_file'])]
+
+    def __str__(self):
+        return f'{self.name or self.id} ({self.source_file})'

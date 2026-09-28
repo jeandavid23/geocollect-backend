@@ -24,3 +24,21 @@ class BelongsToCooperative(BasePermission):
             return True
         cooperative_id = getattr(obj, 'cooperative_id', None)
         return cooperative_id and cooperative_id == request.user.cooperative_id
+
+
+def resolve_cooperative(request, source=None):
+    """
+    Coopérative ciblée par la requête.
+    - coopérative / agent : toujours la leur (impossible d'en viser une autre) ;
+    - super admin : celle passée en paramètre `cooperative` (query string ou corps).
+    Renvoie None si aucune n'est déterminée.
+    """
+    from apps.cooperatives.models import Cooperative
+
+    user = request.user
+    if user.role in ('cooperative', 'agent'):
+        return user.cooperative
+    coop_id = (source or {}).get('cooperative') or request.query_params.get('cooperative')
+    if not coop_id:
+        return None
+    return Cooperative.objects.filter(pk=coop_id).first()

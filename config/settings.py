@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     'apps.producers',
     'apps.parcels',
     'apps.dashboard',
+    'apps.registry',
 ]
 
 MIDDLEWARE = [
@@ -99,6 +100,10 @@ else:
         }
     }
 
+# ─── Taille des envois ─────────────────────────────────────────────────────────
+# Import de registres Excel et d'anciens polygones : corps JSON volumineux.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 30 * 1024 * 1024
+
 # ─── Custom User Model ──────────────────────────────────────────────────────────
 
 AUTH_USER_MODEL = 'accounts.User'
@@ -117,7 +122,7 @@ REST_FRAMEWORK = {
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ),
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'DEFAULT_PAGINATION_CLASS': 'utils.pagination.StandardPagination',
     'PAGE_SIZE': 50,
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',

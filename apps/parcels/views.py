@@ -25,14 +25,12 @@ class ParcelListCreateView(generics.ListCreateAPIView):
         return [IsAgentOrAbove()]
 
     def get_queryset(self):
-        qs = Parcel.objects.select_related('producer', 'cooperative', 'agent__user')
+        qs = Parcel.objects.select_related('producer', 'cooperative', 'agent__user').order_by('-created_at', 'id')
         user = self.request.user
-        if user.role == 'cooperative':
-            qs = qs.filter(cooperative=user.cooperative)
-        elif user.role == 'agent':
-            agent = getattr(user, 'agent_profile', None)
-            if agent:
-                qs = qs.filter(agent=agent)
+        # Coopérative ET agent voient TOUTES les parcelles de la coopérative
+        # (l'agent repère ainsi les parcelles déjà mappées par ses collègues)
+        if user.role in ('cooperative', 'agent'):
+            qs = qs.filter(cooperative_id=user.cooperative_id)
         return qs
 
 
@@ -65,12 +63,8 @@ class ParcelGeoJSONView(APIView):
     def get(self, request):
         qs = Parcel.objects.select_related('producer')
         user = request.user
-        if user.role == 'cooperative':
-            qs = qs.filter(cooperative=user.cooperative)
-        elif user.role == 'agent':
-            agent = getattr(user, 'agent_profile', None)
-            if agent:
-                qs = qs.filter(agent=agent)
+        if user.role in ('cooperative', 'agent'):
+            qs = qs.filter(cooperative_id=user.cooperative_id)
 
         features = [ParcelGeoJSONSerializer(p).data for p in qs]
         return Response({'type': 'FeatureCollection', 'features': features})

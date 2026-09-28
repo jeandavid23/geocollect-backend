@@ -145,6 +145,7 @@ class ProducerSerializer(serializers.ModelSerializer):
             'permanent_workers', 'temporary_workers',
             # Inspection
             'inspector_name', 'inspection_year', 'inspection_month', 'inspection_day',
+            'extra_data',
             'is_active', 'parcel_count', 'total_hectares', 'created_at',
         ]
         read_only_fields = ['id', 'field_id_base', 'created_at']
@@ -175,6 +176,7 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
             'permanent_workers', 'temporary_workers',
             # Inspection
             'inspector_name', 'inspection_year', 'inspection_month', 'inspection_day',
+            'extra_data',
         ]
         read_only_fields = ['id', 'field_id_base']
         extra_kwargs = {
@@ -185,7 +187,7 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
                 'phone', 'national_id', 'owner_first_name', 'owner_last_name',
                 'owner_phone', 'owner_national_id', 'owner_gender', 'inspector_name']},
             **{f: {'required': False} for f in
-               ['total_area_ha', 'num_units', 'certification_year', 'birth_year',
+               ['extra_data', 'total_area_ha', 'num_units', 'certification_year', 'birth_year',
                 'permanent_workers', 'temporary_workers', 'farm_type',
                 'inspection_year', 'inspection_month', 'inspection_day']},
         }

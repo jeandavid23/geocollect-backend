@@ -94,6 +94,8 @@ class Producer(models.Model):
     # Champs internes conservés
     section = models.CharField(max_length=100, verbose_name='Section')
     country = models.CharField(max_length=100, default="Côte d'Ivoire", verbose_name='Pays')
+    # Toutes les colonnes du fichier Excel importé, sous leur entête d'origine
+    extra_data = models.JSONField(default=dict, blank=True, verbose_name='Données importées (Excel)')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

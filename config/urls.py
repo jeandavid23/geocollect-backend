@@ -30,4 +30,5 @@ urlpatterns = [
     path('api/v1/', include('apps.producers.urls')),
     path('api/v1/parcels/', include('apps.parcels.urls')),
     path('api/v1/dashboard/', include('apps.dashboard.urls')),
+    path('api/v1/registry/', include('apps.registry.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
