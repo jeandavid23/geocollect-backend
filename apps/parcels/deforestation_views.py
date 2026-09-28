@@ -1,61 +1,64 @@
+import logging
+
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .deforestation import analyze_features, EUDR_CUTOFF_YEAR
+from . import deforestation as dc
 
-MAX_FEATURES = 500
+log = logging.getLogger(__name__)
+
+# Par appel : le navigateur découpe les gros fichiers (10 000+ parcelles) en lots triés par latitude
+MAX_FEATURES = 1000
 
 
 class DeforestationAnalyzeView(APIView):
     """
     POST /api/v1/parcels/deforestation/analyze/
 
-    Corps attendu :
+    Corps :
       {
-        "cutoff_year": 2020,          # optionnel (défaut 2020, seuil EUDR)
-        "features": [
-          {"name": "Parcelle 1", "area_ha": 2.5,
-           "geometry": {"type": "Polygon", "coordinates": [[[lng,lat],...]]}},
-          ...
-        ]
+        "standard": "EUDR" | "RA" | "EUDR+RA",   # défaut EUDR (perte après 2020)
+        "tolerance_ha": 0.01,                     # perte négligée (bord de pixel)
+        "alert_pct": 1.0,                         # perte <= 1 % -> « À risque », au-delà « Non conforme »
+        "treecover_min": 10,                      # couvert 2000 minimal pour être « forêt » (FAO)
+        "features": [ {"geometry": {...}, "area_ha": 2.5}, ... ]   # 1000 max
       }
-
-    Réponse :
-      { "count": N, "cutoff_year": 2020, "results": [ {..., risk, risk_label}, ... ] }
+    Réponse : { "count", "standard", "cutoff_year", "source", "results": [...] } (même ordre que features)
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         features = request.data.get('features') or []
         if not isinstance(features, list) or not features:
-            return Response(
-                {'detail': 'Aucune géométrie fournie (champ "features" vide).'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({'detail': 'Aucune géométrie fournie (champ "features" vide).'},
+                            status=status.HTTP_400_BAD_REQUEST)
         if len(features) > MAX_FEATURES:
-            return Response(
-                {'detail': f'Trop de géométries ({len(features)}). Maximum {MAX_FEATURES} par analyse.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({'detail': f'{len(features)} géométries : maximum {MAX_FEATURES} par envoi.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        standard = request.data.get('standard') or 'EUDR'
+        if standard not in ('EUDR', 'RA', 'EUDR+RA'):
+            standard = 'EUDR'
+        try:
+            tolerance_ha = max(0.0, float(request.data.get('tolerance_ha', 0.01)))
+            alert_pct = max(0.0, float(request.data.get('alert_pct', 1.0)))
+            treecover_min = min(100, max(0, int(request.data.get('treecover_min', dc.FAO_TREECOVER_MIN))))
+        except (TypeError, ValueError):
+            return Response({'detail': 'Paramètres invalides.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            cutoff_year = int(request.data.get('cutoff_year') or EUDR_CUTOFF_YEAR)
-        except (TypeError, ValueError):
-            cutoff_year = EUDR_CUTOFF_YEAR
-
-        results, error = analyze_features(features, cutoff_year=cutoff_year)
-        if error:
-            # 503 : le service (GEE) n'est pas disponible / non configuré.
-            return Response({'detail': error}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-
-        summary = {'high': 0, 'medium': 0, 'low': 0, 'unknown': 0}
-        for r in results:
-            summary[r.get('risk', 'unknown')] = summary.get(r.get('risk', 'unknown'), 0) + 1
+            results, cutoff = dc.analyze(features, standard, tolerance_ha, alert_pct, treecover_min)
+        except Exception as exc:  # noqa: BLE001 — lecture distante des tuiles Hansen
+            log.exception('Analyse Hansen impossible')
+            # 503 : erreur passagère (réseau, stockage Google) — le navigateur retente le lot
+            return Response({'detail': f'Lecture des données Hansen impossible pour le moment : {exc}'},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         return Response({
             'count': len(results),
-            'cutoff_year': cutoff_year,
-            'summary': summary,
+            'standard': standard,
+            'cutoff_year': cutoff,
+            'source': f'Hansen Global Forest Change {dc.HANSEN_VERSION} (UMD / Google)',
             'results': results,
         })

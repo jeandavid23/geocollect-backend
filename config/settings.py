@@ -160,6 +160,9 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
     r'^https://.*\.vercel\.app$',
 ]
 CORS_ALLOW_CREDENTIALS = True
+# Le Polygon Validator envoie les gros fichiers compressés (Content-Encoding: gzip)
+from corsheaders.defaults import default_headers  # noqa: E402
+CORS_ALLOW_HEADERS = (*default_headers, 'content-encoding')
 
 # ─── Celery ────────────────────────────────────────────────────────────────────
 
