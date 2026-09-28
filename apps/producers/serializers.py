@@ -183,7 +183,8 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
             'cooperative': {'required': False},
             'assigned_agent': {'required': False},
             **{f: {'required': False, 'allow_blank': True} for f in
-               ['national_farm_id', 'district', 'region', 'country', 'village',
+               ['first_name', 'last_name', 'section',
+                'national_farm_id', 'district', 'region', 'country', 'village',
                 'phone', 'national_id', 'owner_first_name', 'owner_last_name',
                 'owner_phone', 'owner_national_id', 'owner_gender', 'inspector_name']},
             **{f: {'required': False} for f in

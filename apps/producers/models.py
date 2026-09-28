@@ -63,8 +63,9 @@ class Producer(models.Model):
 
     # ══ OPÉRATEUR DE L'EXPLOITATION ══
     # 10-11. Prénom / Nom
-    first_name = models.CharField(max_length=100, verbose_name='Prénom (opérateur)')
-    last_name = models.CharField(max_length=100, verbose_name='Nom (opérateur)')
+    # Facultatifs : un import Excel garde les entêtes du fichier sans exiger ces colonnes
+    first_name = models.CharField(max_length=100, blank=True, verbose_name='Prénom (opérateur)')
+    last_name = models.CharField(max_length=100, blank=True, verbose_name='Nom (opérateur)')
     # 12. Numéro de téléphone
     phone = models.CharField(max_length=20, blank=True, verbose_name='Téléphone (opérateur)')
     # 13. Numéro d'identification national (CNI)
@@ -92,7 +93,7 @@ class Producer(models.Model):
     inspection_day = models.PositiveSmallIntegerField(null=True, blank=True, verbose_name="Jour d'inspection")
 
     # Champs internes conservés
-    section = models.CharField(max_length=100, verbose_name='Section')
+    section = models.CharField(max_length=100, blank=True, verbose_name='Section')
     country = models.CharField(max_length=100, default="Côte d'Ivoire", verbose_name='Pays')
     # Toutes les colonnes du fichier Excel importé, sous leur entête d'origine
     extra_data = models.JSONField(default=dict, blank=True, verbose_name='Données importées (Excel)')
@@ -110,7 +111,7 @@ class Producer(models.Model):
 
     @property
     def full_name(self):
-        return f'{self.last_name} {self.first_name}'
+        return f'{self.last_name} {self.first_name}'.strip()
 
     @property
     def parcel_count(self):

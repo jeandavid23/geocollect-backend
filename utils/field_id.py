@@ -5,7 +5,8 @@ Format : SECTION000245 (base) → SECTION000245-M001 (parcelle)
 
 
 def generate_field_id_base(section: str, index: int) -> str:
-    code = section.upper().replace(' ', '')[:10]
+    # Sans section (import Excel sans colonne « Section ») : préfixe PROD
+    code = section.upper().replace(' ', '')[:10] or 'PROD'
     return f'{code}{str(index).zfill(6)}'
 
 
