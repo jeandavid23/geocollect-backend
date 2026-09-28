@@ -5,6 +5,8 @@ set -o errexit
 pip install -r requirements.txt
 python manage.py collectstatic --no-input
 python manage.py migrate
+# Table du cache partagé (limite des tentatives de connexion) — sans effet si elle existe déjà
+python manage.py createcachetable
 
 # Comptes de démonstration (admin/coop/agent) : UNIQUEMENT si SEED_DEMO_DATA=True.
 # Sécurité : aucun mot de passe n'est plus réinitialisé automatiquement à chaque déploiement

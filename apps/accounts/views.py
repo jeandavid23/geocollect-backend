@@ -11,11 +11,12 @@ from .serializers import (
     NotificationSerializer,
 )
 from .permissions import IsSuperAdmin
+from .throttles import LoginThrottle, PasswordThrottle
 
 
 class LoginView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
-    throttle_scope = 'login'   # 10 tentatives / minute / adresse IP
+    throttle_classes = [LoginThrottle]   # 10 tentatives / minute par identifiant visé
 
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
@@ -56,7 +57,7 @@ class MeView(generics.RetrieveUpdateAPIView):
 
 class ChangePasswordView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-    throttle_scope = 'password'
+    throttle_classes = [PasswordThrottle]
 
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})

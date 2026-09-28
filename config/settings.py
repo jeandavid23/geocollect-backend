@@ -111,6 +111,13 @@ else:
 # Import de registres Excel et d'anciens polygones : corps JSON volumineux.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 30 * 1024 * 1024
 
+# ─── Cache ──────────────────────────────────────────────────────────────────────
+# « shared » : en base, partagé entre les processus gunicorn (limite des tentatives de connexion)
+CACHES = {
+    'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
+    'shared': {'BACKEND': 'django.core.cache.backends.db.DatabaseCache', 'LOCATION': 'geocollect_cache'},
+}
+
 # ─── Custom User Model ──────────────────────────────────────────────────────────
 
 AUTH_USER_MODEL = 'accounts.User'
