@@ -1,4 +1,5 @@
 from django.db import models, transaction
+from django.db.models import Count, Q, Sum
 from rest_framework import generics, filters, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -27,7 +28,9 @@ class AgentListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         # ordre stable : indispensable pour paginer sans sauter ni dupliquer de lignes
-        qs = Agent.objects.select_related('user', 'cooperative').order_by('created_at', 'id')
+        qs = (Agent.objects.select_related('user', 'cooperative')
+              .annotate(parcel_count_annot=Count('parcels'), total_hectares_annot=Sum('parcels__area_hectares'))
+              .order_by('created_at', 'id'))
         user = self.request.user
         if user.role == 'cooperative':
             qs = qs.filter(cooperative=user.cooperative)
@@ -55,7 +58,9 @@ class ProducerListCreateView(generics.ListCreateAPIView):
         return [IsAgentOrAbove()]
 
     def get_queryset(self):
-        qs = Producer.objects.select_related('cooperative', 'assigned_agent__user').order_by('last_name', 'first_name', 'id')
+        qs = (Producer.objects.select_related('cooperative', 'assigned_agent__user')
+              .annotate(parcel_count_annot=Count('parcels'), total_hectares_annot=Sum('parcels__area_hectares'))
+              .order_by('last_name', 'first_name', 'id'))
         user = self.request.user
         # Coopérative ET agent voient TOUS les producteurs de la coopérative
         if user.role in ('cooperative', 'agent') and user.cooperative_id:
@@ -77,12 +82,63 @@ class ProducerBulkImportView(APIView):
     Corps : {"cooperative": "<uuid, super admin seulement>", "producers": [ {...}, ... ]}
 
     Crée en une requête les producteurs d'un fichier Excel. Chaque ligne peut porter
-    `extra_data` (toutes les colonnes du fichier, sous leur entête d'origine).
-    Les textes trop longs pour une colonne sont tronqués : la valeur complète reste dans extra_data.
+    `extra_data` (toutes les colonnes du fichier, sous leur entête d'origine). Aucun champ n'est obligatoire.
+
+    Conçu pour des milliers de lignes : le nombre de requêtes SQL ne dépend PAS du nombre de lignes
+    (la base Neon est à plusieurs centaines de ms du serveur : une requête par ligne dépasserait le délai).
+    Les valeurs invalides d'un champ typé (année, superficie…) sont ignorées ; elles restent dans extra_data.
     Réponse : {"created": [...producteurs...], "errors": [{"index": i, "errors": {...}}]}
     """
     permission_classes = [IsCooperativeOrAdmin]
     MAX_ROWS = 5000
+
+    TEXT_FIELDS = [
+        'first_name', 'last_name', 'phone', 'national_id', 'village', 'district', 'region', 'section',
+        'country', 'national_farm_id', 'owner_first_name', 'owner_last_name', 'owner_phone',
+        'owner_national_id', 'inspector_name',
+    ]
+    INT_FIELDS = [
+        'birth_year', 'num_units', 'certification_year', 'permanent_workers', 'temporary_workers',
+        'inspection_year', 'inspection_month', 'inspection_day',
+    ]
+
+    @staticmethod
+    def _int(v):
+        try:
+            n = int(float(str(v).replace(',', '.').strip()))
+        except (TypeError, ValueError):
+            return None
+        return n if 0 <= n <= 32767 else None
+
+    @staticmethod
+    def _decimal(v):
+        try:
+            n = round(float(str(v).replace(',', '.').replace(' ', '')), 2)
+        except (TypeError, ValueError):
+            return None
+        return n if 0 <= n < 10 ** 8 else None
+
+    def _clean(self, row, limits):
+        data = {}
+        for f in self.TEXT_FIELDS:
+            v = row.get(f)
+            if v is not None and v != '':
+                data[f] = str(v).strip()[:limits[f]]
+        for f in self.INT_FIELDS:
+            n = self._int(row.get(f)) if row.get(f) not in (None, '') else None
+            if n is not None:
+                data[f] = n
+        if row.get('total_area_ha') not in (None, ''):
+            n = self._decimal(row['total_area_ha'])
+            if n is not None:
+                data['total_area_ha'] = n
+        data['gender'] = 'F' if str(row.get('gender', '')).upper().startswith('F') else 'M'
+        if row.get('owner_gender') in ('M', 'F'):
+            data['owner_gender'] = row['owner_gender']
+        data['farm_type'] = 'large' if row.get('farm_type') == 'large' else 'small'
+        extra = row.get('extra_data')
+        data['extra_data'] = extra if isinstance(extra, dict) else {}
+        return data
 
     def post(self, request):
         rows = request.data.get('producers') or []
@@ -96,47 +152,45 @@ class ProducerBulkImportView(APIView):
         if cooperative is None:
             return Response({'detail': 'Coopérative requise.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        char_limits = {
-            f.name: f.max_length for f in Producer._meta.get_fields()
-            if isinstance(f, models.CharField) and f.max_length
-        }
+        limits = {f.name: f.max_length for f in Producer._meta.get_fields()
+                  if isinstance(f, models.CharField) and f.max_length}
+        # Un agent qui importe est rattaché d'office à ses producteurs
+        agent = getattr(request.user, 'agent_profile', None) if request.user.role == 'agent' else None
 
         valid, errors = [], []
         for i, row in enumerate(rows):
             if not isinstance(row, dict):
                 errors.append({'index': i, 'errors': {'detail': 'Ligne invalide.'}})
                 continue
-            row = {
-                k: (v[:char_limits[k]] if isinstance(v, str) and k in char_limits else v)
-                for k, v in row.items()
-            }
-            row['cooperative'] = str(cooperative.pk)
-            serializer = ProducerCreateSerializer(data=row, context={'request': request})
-            if serializer.is_valid():
-                data = serializer.validated_data
-                data['cooperative'] = cooperative
-                valid.append(data)
-            else:
-                errors.append({'index': i, 'errors': serializer.errors})
+            valid.append(self._clean(row, limits))
 
         created = []
         if valid:
             with transaction.atomic():
-                next_index = {}
-                used = set()  # deux sections peuvent produire le même code (ex. « SECTION A » / « SECTIONA »)
+                sections = {d.get('section', '') for d in valid}
+                codes = {s: generate_field_id_base(s, 0)[:-6] for s in sections}
+                # 1 requête : nombre de producteurs déjà enregistrés par section
+                counts = dict(
+                    Producer.objects.filter(cooperative=cooperative, section__in=sections)
+                    .values_list('section').annotate(n=Count('id')).values_list('section', 'n'))
+                # 1 requête : FIELD ID déjà pris (toutes coopératives) pour ces préfixes
+                prefix_q = Q()
+                for code in set(codes.values()):
+                    prefix_q |= Q(field_id_base__startswith=code)
+                used = set(Producer.objects.filter(prefix_q).values_list('field_id_base', flat=True))
+
+                next_index = {s: counts.get(s, 0) + 1 for s in sections}
                 objs = []
                 for data in valid:
                     section = data.get('section', '')
-                    if section not in next_index:
-                        next_index[section] = get_next_producer_index(cooperative.id, section)
                     base = generate_field_id_base(section, next_index[section])
-                    while base in used or Producer.objects.filter(field_id_base=base).exists():
+                    while base in used:
                         next_index[section] += 1
                         base = generate_field_id_base(section, next_index[section])
                     used.add(base)
                     next_index[section] += 1
-                    objs.append(Producer(field_id_base=base, **data))
-                created = Producer.objects.bulk_create(objs, batch_size=500)
+                    objs.append(Producer(cooperative=cooperative, assigned_agent=agent, field_id_base=base, **data))
+                created = Producer.objects.bulk_create(objs, batch_size=1000)
 
             try:
                 from apps.accounts.notify import notify_cooperative
@@ -148,10 +202,11 @@ class ProducerBulkImportView(APIView):
             except Exception:
                 pass
 
-        # Relecture pour disposer des champs calculés (parcel_count, noms liés…)
-        created_qs = Producer.objects.select_related('cooperative', 'assigned_agent__user').filter(
-            pk__in=[p.pk for p in created])
+        # Réponse sans requête supplémentaire : les nouveaux producteurs n'ont encore aucune parcelle
+        for p in created:
+            p.parcel_count_annot = 0
+            p.total_hectares_annot = 0
         return Response({
-            'created': ProducerSerializer(created_qs, many=True).data,
+            'created': ProducerSerializer(created, many=True).data,
             'errors': errors,
         }, status=status.HTTP_201_CREATED if created else status.HTTP_400_BAD_REQUEST)

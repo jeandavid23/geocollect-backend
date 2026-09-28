@@ -3,6 +3,22 @@ from rest_framework import serializers
 from .models import Agent, Producer
 
 
+def _annotated_counts(serializer_cls):
+    """parcel_count / total_hectares lus depuis l'annotation SQL quand elle existe (sinon 2 requêtes par objet)."""
+    def parcel_count(self, obj):
+        v = getattr(obj, 'parcel_count_annot', None)
+        return v if v is not None else obj.parcel_count
+
+    def total_hectares(self, obj):
+        if hasattr(obj, 'total_hectares_annot'):
+            return round(obj.total_hectares_annot or 0, 2)
+        return obj.total_hectares
+
+    serializer_cls.get_parcel_count = parcel_count
+    serializer_cls.get_total_hectares = total_hectares
+    return serializer_cls
+
+
 def _uuid_hex():
     return uuid.uuid4().hex[:6].upper()
 
@@ -103,12 +119,13 @@ class AgentCreateSerializer(serializers.ModelSerializer):
         return agent
 
 
+@_annotated_counts
 class AgentSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source='user.full_name', read_only=True)
     email = serializers.CharField(source='user.email', read_only=True)
     phone = serializers.CharField(source='user.phone', read_only=True)
-    parcel_count = serializers.ReadOnlyField()
-    total_hectares = serializers.ReadOnlyField()
+    parcel_count = serializers.SerializerMethodField()
+    total_hectares = serializers.SerializerMethodField()
     cooperative_name = serializers.CharField(source='cooperative.name', read_only=True)
 
     class Meta:
@@ -121,10 +138,11 @@ class AgentSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 
+@_annotated_counts
 class ProducerSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
-    parcel_count = serializers.ReadOnlyField()
-    total_hectares = serializers.ReadOnlyField()
+    parcel_count = serializers.SerializerMethodField()
+    total_hectares = serializers.SerializerMethodField()
     cooperative_name = serializers.CharField(source='cooperative.name', read_only=True)
     assigned_agent_name = serializers.CharField(source='assigned_agent.user.full_name', read_only=True)
 

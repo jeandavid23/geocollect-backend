@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Count, Sum
 from rest_framework import status
 from rest_framework.response import Response
@@ -7,7 +8,7 @@ from apps.accounts.permissions import IsAgentOrAbove, IsCooperativeOrAdmin, reso
 from .models import LegacyParcel
 
 GEOMETRY_TYPES = {'Polygon', 'MultiPolygon'}
-MAX_FEATURES = 20000
+MAX_FEATURES = 5000  # par envoi : le navigateur découpe les gros fichiers en plusieurs lots
 
 
 def _scoped(request):
@@ -43,8 +44,22 @@ class LegacyParcelListView(APIView):
         return [IsCooperativeOrAdmin()] if self.request.method == 'DELETE' else [IsAgentOrAbove()]
 
     def get(self, request):
-        qs = _scoped(request)
-        return Response([_serialize(p) for p in qs])
+        qs = _scoped(request).order_by('source_file', 'name', 'id')
+        if 'page' not in request.query_params:
+            return Response([_serialize(p) for p in qs])
+        # Pagination (?page=&page_size=, 2000 max) : plus de 10 000 polygones sans réponse géante
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+            size = min(2000, max(1, int(request.query_params.get('page_size', 1000))))
+        except ValueError:
+            return Response({'detail': 'Pagination invalide.'}, status=status.HTTP_400_BAD_REQUEST)
+        total = qs.count()
+        start = (page - 1) * size
+        return Response({
+            'count': total,
+            'next': page + 1 if start + size < total else None,
+            'results': [_serialize(p) for p in qs[start:start + size]],
+        })
 
     def delete(self, request):
         source = request.query_params.get('source_file')
@@ -94,10 +109,14 @@ class LegacyParcelImportView(APIView):
                 uploaded_by=request.user,
             ))
 
-        if request.data.get('replace') and source:
-            LegacyParcel.objects.filter(cooperative=cooperative, source_file=source).delete()
-        LegacyParcel.objects.bulk_create(objs, batch_size=500)
+        with transaction.atomic():
+            if request.data.get('replace') and source:
+                LegacyParcel.objects.filter(cooperative=cooperative, source_file=source).delete()
+            LegacyParcel.objects.bulk_create(objs, batch_size=1000)
 
+        # une seule notification par fichier : au premier lot (replace) uniquement
+        if not request.data.get('notify', True):
+            return Response({'created': len(objs), 'skipped': skipped}, status=status.HTTP_201_CREATED)
         try:
             from apps.accounts.notify import notify_cooperative
             notify_cooperative(
