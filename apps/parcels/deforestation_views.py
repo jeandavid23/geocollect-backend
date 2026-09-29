@@ -44,11 +44,14 @@ class DeforestationAnalyzeView(APIView):
             tolerance_ha = max(0.0, float(request.data.get('tolerance_ha', 0.01)))
             alert_pct = max(0.0, float(request.data.get('alert_pct', 1.0)))
             treecover_min = min(100, max(0, int(request.data.get('treecover_min', dc.FAO_TREECOVER_MIN))))
+            apply_rdue = request.data.get('apply_rdue') in (True, 'true', '1', 1)
+            forest_min_frac = min(1.0, max(0.0, float(request.data.get('forest_min_frac', 0.10))))
         except (TypeError, ValueError):
             return Response({'detail': 'Paramètres invalides.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            results, cutoff = dc.analyze(features, standard, tolerance_ha, alert_pct, treecover_min)
+            results, cutoff = dc.analyze(features, standard, tolerance_ha, alert_pct, treecover_min,
+                                         apply_rdue, forest_min_frac)
         except Exception as exc:  # noqa: BLE001 — lecture distante des tuiles Hansen
             log.exception('Analyse Hansen impossible')
             # 503 : erreur passagère (réseau, stockage Google) — le navigateur retente le lot
@@ -60,5 +63,17 @@ class DeforestationAnalyzeView(APIView):
             'standard': standard,
             'cutoff_year': cutoff,
             'source': f'Hansen Global Forest Change {dc.HANSEN_VERSION} (UMD / Google)',
+            'rdue': apply_rdue,
             'results': results,
         })
+
+
+class LandZoneListView(APIView):
+    """GET /api/v1/parcels/landuse/ : zones foncières RDUE (carte) — FeatureCollection."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .models import LandZone
+        feats = [{'type': 'Feature', 'geometry': g, 'properties': {'category': c, 'name': n, 'region': r}}
+                 for c, n, r, g in LandZone.objects.values_list('category', 'name', 'region', 'geometry')]
+        return Response({'type': 'FeatureCollection', 'features': feats})

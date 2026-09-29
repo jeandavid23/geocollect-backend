@@ -94,3 +94,33 @@ class LegacyParcel(models.Model):
 
     def __str__(self):
         return f'{self.name or self.id} ({self.source_file})'
+
+
+class LandZone(models.Model):
+    """
+    Zone foncière de référence pour la matrice RDUE (Côte d'Ivoire) : forêt classée,
+    parc / réserve, agro-forêt, enclave. Données privées de l'utilisateur, importées en base
+    (commande import_landuse) — jamais dans le dépôt de code, qui est public.
+    """
+    class Category(models.TextChoices):
+        ENCLAVE = 'Enclave', 'Enclave'
+        PARC = 'Parc/reserve', 'Parc / réserve'
+        FORET_CLASSEE = 'Foret classee', 'Forêt classée'
+        AGROFORET = 'Agro-foret classee', 'Agro-forêt classée'
+
+    id = models.BigAutoField(primary_key=True)
+    category = models.CharField(max_length=30, choices=Category.choices, db_index=True)
+    name = models.CharField(max_length=255, blank=True)
+    region = models.CharField(max_length=100, blank=True)
+    attributes = models.JSONField(default=dict, blank=True)
+    geometry = models.JSONField(verbose_name='Géométrie GeoJSON (WGS84)')
+    source_file = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Zone foncière (RDUE)'
+        verbose_name_plural = 'Zones foncières (RDUE)'
+        ordering = ['category', 'name']
+
+    def __str__(self):
+        return f'{self.get_category_display()} — {self.name}'

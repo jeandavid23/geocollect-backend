@@ -223,7 +223,8 @@ def _groups(items):
         yield g, group
 
 
-def analyze(features, standard='EUDR', tolerance_ha=0.01, alert_pct=1.0, treecover_min=FAO_TREECOVER_MIN):
+def analyze(features, standard='EUDR', tolerance_ha=0.01, alert_pct=1.0, treecover_min=FAO_TREECOVER_MIN,
+            apply_rdue=False, forest_min_frac=0.10):
     """
     features : [{'geometry': GeoJSON (Polygon, MultiPolygon ou Point), 'area_ha': float|None}]
     Retourne une liste alignée sur `features`.
@@ -279,7 +280,32 @@ def analyze(features, standard='EUDR', tolerance_ha=0.01, alert_pct=1.0, treecov
                     results[it['i']] = _analyze_one(it, loss, cover, pix_ha, gr0, gc0, top, left,
                                                     min_code, treecover_min, tolerance_ha, alert_pct,
                                                     rfeatures, from_origin)
+    if apply_rdue:
+        _apply_rdue(results, by_tile, tolerance_ha, forest_min_frac)
     return results, cutoff
+
+
+RISK_ORDER = [RISK_LOW, RISK_MEDIUM, RISK_HIGH, RISK_VHIGH]
+
+
+def _apply_rdue(results, by_tile, tolerance_ha, forest_min_frac):
+    """Matrice RDUE du plugin : légalité foncière x zéro déforestation -> statut final."""
+    from . import rdue
+    status_from_market = {rdue.RDUE_POT: STAT_OK, rdue.RDUE_NO: STAT_FAIL, rdue.RDUE_CHECK: STAT_RISK}
+    for items in by_tile.values():
+        for it in items:
+            r = results[it['i']]
+            if not r or r.get('status') == STAT_NODATA:
+                continue
+            category, zone = rdue.category_of(it['geom'])
+            forest2020_ha = (r['forest2020_pct'] / 100.0) * r['area_ha']
+            m = rdue.apply_matrix(r['defor_ha'], r['area_ha'], forest2020_ha, category, tolerance_ha, forest_min_frac)
+            r.update(m)
+            r['zone'] = zone
+            r['status'] = status_from_market[m['rdue_stat']]
+            # une illégalité foncière relève le risque d'un cran (règle du plugin)
+            if m['legalite'] == rdue.LEGAL_NO:
+                r['risk_level'] = RISK_ORDER[min(RISK_ORDER.index(r['risk_level']) + 1, len(RISK_ORDER) - 1)]
 
 
 def _analyze_one(it, loss, cover, pix_ha, gr0, gc0, top, left, min_code, treecover_min,
