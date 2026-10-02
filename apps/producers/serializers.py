@@ -36,7 +36,7 @@ class AgentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Agent
         fields = [
-            'id', 'cooperative', 'code', 'zone',
+            'id', 'cooperative', 'code', 'zone', 'sections',
             'full_name', 'email', 'phone',
             'login_username', 'login_password',
             'account_username', 'account_password',
@@ -45,6 +45,7 @@ class AgentCreateSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'cooperative': {'required': False},  # auto-rempli pour le rôle cooperative
             'zone': {'required': False, 'allow_blank': True},
+            'sections': {'required': False},
         }
 
     def get_account_username(self, obj):
@@ -59,6 +60,14 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             attrs['cooperative'] = request.user.cooperative
         if not attrs.get('cooperative'):
             raise serializers.ValidationError({'cooperative': 'Coopérative requise.'})
+        # Normalise les sections (liste de noms non vides) et renseigne « zone » pour l'affichage
+        sections = attrs.get('sections')
+        if sections is not None:
+            if not isinstance(sections, list):
+                raise serializers.ValidationError({'sections': 'Liste de sections attendue.'})
+            attrs['sections'] = [str(s).strip() for s in sections if str(s).strip()][:200]
+            if attrs['sections'] and not (attrs.get('zone') or '').strip():
+                attrs['zone'] = ', '.join(attrs['sections'])[:255]
         return attrs
 
     def create(self, validated_data):
@@ -140,7 +149,7 @@ class AgentSerializer(serializers.ModelSerializer):
         model = Agent
         fields = [
             'id', 'user', 'full_name', 'email', 'phone',
-            'cooperative', 'cooperative_name', 'code', 'zone',
+            'cooperative', 'cooperative_name', 'code', 'zone', 'sections',
             'is_active', 'parcel_count', 'total_hectares', 'created_at',
         ]
         read_only_fields = ['id', 'created_at']

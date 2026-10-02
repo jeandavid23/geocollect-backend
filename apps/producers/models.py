@@ -8,6 +8,8 @@ class Agent(models.Model):
     cooperative = models.ForeignKey('cooperatives.Cooperative', on_delete=models.CASCADE, related_name='agents')
     code = models.CharField(max_length=50, unique=True, verbose_name='Code agent')
     zone = models.CharField(max_length=255, blank=True, verbose_name='Zone de travail')
+    # Sections de la coopérative attribuées à l'agent (liste de noms)
+    sections = models.JSONField(default=list, blank=True, verbose_name='Sections attribuées')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -15,6 +15,10 @@ class RegistrySheet(models.Model):
     position = models.PositiveSmallIntegerField(default=0, verbose_name='Ordre')
     data = models.JSONField(default=list, blank=True, verbose_name='Cellules')
     col_widths = models.JSONField(default=list, blank=True, verbose_name='Largeur des colonnes (px)')
+    # Mise en forme par cellule : { "r:c": {b,i,u,c,bg,a,nf,bd} }
+    formats = models.JSONField(default=dict, blank=True, verbose_name='Mise en forme')
+    # Tableaux mis en forme : [ {name, r1,c1,r2,c2, style} ]
+    tables = models.JSONField(default=list, blank=True, verbose_name='Tableaux')
     source_file = models.CharField(max_length=255, blank=True, verbose_name='Fichier Excel d\'origine')
     updated_by = models.ForeignKey('accounts.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)

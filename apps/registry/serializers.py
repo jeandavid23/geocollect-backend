@@ -10,7 +10,7 @@ class RegistrySheetSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RegistrySheet
-        fields = ['id', 'cooperative', 'name', 'position', 'data', 'col_widths',
+        fields = ['id', 'cooperative', 'name', 'position', 'data', 'col_widths', 'formats', 'tables',
                   'source_file', 'updated_by_name', 'created_at', 'updated_at']
         read_only_fields = ['id', 'cooperative', 'created_at', 'updated_at']
 
@@ -19,6 +19,18 @@ class RegistrySheetSerializer(serializers.ModelSerializer):
         if not value:
             raise serializers.ValidationError('Nom de feuille requis.')
         return value[:100]
+
+    def validate_formats(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('Objet attendu pour la mise en forme.')
+        if len(value) > MAX_ROWS * 20:
+            raise serializers.ValidationError('Trop de cellules mises en forme.')
+        return value
+
+    def validate_tables(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError('Liste attendue pour les tableaux.')
+        return value[:200]
 
     def validate_data(self, value):
         if not isinstance(value, list):
