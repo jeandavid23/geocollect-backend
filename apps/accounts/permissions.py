@@ -98,9 +98,13 @@ def resolve_cooperative(request, source=None):
     Renvoie None si aucune n'est déterminée ou autorisée.
     """
     user = request.user
-    if user.role in ('cooperative', 'agent'):
-        return user.cooperative
     coop_id = (source or {}).get('cooperative') or request.query_params.get('cooperative')
+    if user.role in ('cooperative', 'agent'):
+        # Une coopérative / un agent qui vise explicitement une AUTRE coopérative est refusé
+        # (plutôt que d'appliquer silencieusement la demande à sa propre coopérative)
+        if coop_id and str(coop_id) != str(user.cooperative_id):
+            return None
+        return user.cooperative
     if not coop_id:
         return None
     try:

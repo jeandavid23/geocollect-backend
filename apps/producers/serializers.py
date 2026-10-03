@@ -57,6 +57,9 @@ class AgentCreateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         request = self.context.get('request')
         if request and getattr(request.user, 'role', None) == 'cooperative':
+            asked = attrs.get('cooperative')
+            if asked is not None and asked.pk != request.user.cooperative_id:
+                raise serializers.ValidationError({'cooperative': 'Coopérative inconnue.'})
             attrs['cooperative'] = request.user.cooperative
         if not attrs.get('cooperative'):
             raise serializers.ValidationError({'cooperative': 'Coopérative requise.'})
@@ -245,6 +248,10 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         request = self.context.get('request')
         user = getattr(request, 'user', None)
+        if user and user.role in ('cooperative', 'agent'):
+            asked = attrs.get('cooperative')
+            if asked is not None and asked.pk != user.cooperative_id:
+                raise serializers.ValidationError({'cooperative': 'Coopérative inconnue.'})
         if user:
             if user.role == 'cooperative':
                 attrs['cooperative'] = user.cooperative
