@@ -4,7 +4,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.permissions import IsCooperativeOrAdmin, resolve_cooperative
+from apps.accounts.permissions import IsCooperativeOrAdmin, resolve_cooperative, scope_to_cooperative, module_required
 from .models import RegistrySheet
 from .serializers import RegistrySheetSerializer
 
@@ -13,8 +13,9 @@ def _scoped(request):
     qs = RegistrySheet.objects.select_related('updated_by')
     if request.user.role == 'cooperative':
         return qs.filter(cooperative_id=request.user.cooperative_id)
-    coop_id = request.query_params.get('cooperative')
-    return qs.filter(cooperative_id=coop_id) if coop_id else qs.none()
+    # super admin / propriétaire : le registre d'UNE coopérative accessible (?cooperative=<uuid>)
+    coop = resolve_cooperative(request)
+    return qs.filter(cooperative=coop) if coop else qs.none()
 
 
 class RegistrySheetListCreateView(generics.ListCreateAPIView):
@@ -23,7 +24,7 @@ class RegistrySheetListCreateView(generics.ListCreateAPIView):
     POST /api/v1/registry/sheets/  {name, data, col_widths, position}   → nouvelle feuille
     """
     serializer_class = RegistrySheetSerializer
-    permission_classes = [IsCooperativeOrAdmin]
+    permission_classes = [IsCooperativeOrAdmin, module_required('registry')]
     pagination_class = None
 
     def get_queryset(self):
@@ -41,13 +42,10 @@ class RegistrySheetListCreateView(generics.ListCreateAPIView):
 class RegistrySheetDetailView(generics.RetrieveUpdateDestroyAPIView):
     """GET / PATCH / DELETE /api/v1/registry/sheets/<uuid>/"""
     serializer_class = RegistrySheetSerializer
-    permission_classes = [IsCooperativeOrAdmin]
+    permission_classes = [IsCooperativeOrAdmin, module_required('registry')]
 
     def get_queryset(self):
-        qs = RegistrySheet.objects.select_related('updated_by')
-        if self.request.user.role == 'cooperative':
-            qs = qs.filter(cooperative_id=self.request.user.cooperative_id)
-        return qs
+        return scope_to_cooperative(RegistrySheet.objects.select_related('updated_by'), self.request.user)
 
     def perform_update(self, serializer):
         name = serializer.validated_data.get('name')
@@ -66,7 +64,7 @@ class RegistryImportView(APIView):
     - replace : le registre est entièrement remplacé par le classeur importé ;
     - merge   : les feuilles de même nom sont remplacées, les autres sont conservées.
     """
-    permission_classes = [IsCooperativeOrAdmin]
+    permission_classes = [IsCooperativeOrAdmin, module_required('registry')]
 
     def post(self, request):
         cooperative = resolve_cooperative(request, request.data)

@@ -7,9 +7,15 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """JWT login — retourne les infos utilisateur avec les tokens."""
 
     def validate(self, attrs):
+        from rest_framework.exceptions import AuthenticationFailed
+        from .tenancy import tenant_status
         data = super().validate(attrs)
         user = self.user
-        data['user'] = UserSerializer(user).data
+        status = tenant_status(user)
+        if not status['active']:
+            # Organisation suspendue, abonnement expiré ou coopérative désactivée : connexion refusée
+            raise AuthenticationFailed({'detail': status['reason'], 'code': 'tenant_inactive'})
+        data['user'] = MeSerializer(user).data
         return data
 
 
@@ -93,3 +99,42 @@ class NotificationSerializer(serializers.ModelSerializer):
         model = Notification
         fields = ['id', 'type', 'title', 'message', 'is_read', 'cooperative_name', 'created_at']
         read_only_fields = fields
+
+
+class MeSerializer(UserSerializer):
+    """Profil de l'utilisateur connecté + droits de son organisation (modules, licence)."""
+    modules = serializers.SerializerMethodField()
+    license = serializers.SerializerMethodField()
+
+    class Meta(UserSerializer.Meta):
+        fields = UserSerializer.Meta.fields + ['modules', 'license']
+
+    def get_modules(self, obj):
+        from .tenancy import tenant_status
+        return tenant_status(obj)['modules']   # None = tous les modules
+
+    def get_license(self, obj):
+        """Licence et consommation du super admin (son propre abonnement) ; None pour les autres rôles."""
+        if obj.role != 'super_admin':
+            return None
+        return license_summary(obj)
+
+
+def license_summary(admin):
+    """Licence + consommation d'un super admin (utilisé par son tableau de bord et par le propriétaire)."""
+    from apps.producers.models import Agent
+    try:
+        lic = admin.admin_license
+    except Exception:  # noqa: BLE001
+        lic = None
+    coops = admin.managed_cooperatives.all()
+    return {
+        'organization': lic.organization if lic else '',
+        'max_cooperatives': lic.max_cooperatives if lic else None,
+        'max_agents_per_coop': lic.max_agents_per_coop if lic else None,
+        'modules': lic.modules if lic else None,
+        'expires_at': lic.expires_at.isoformat() if lic and lic.expires_at else None,
+        'is_expired': bool(lic and lic.is_expired),
+        'cooperatives_used': coops.count(),
+        'agents_used': Agent.objects.filter(cooperative__managed_by=admin).count(),
+    }

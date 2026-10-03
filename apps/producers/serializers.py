@@ -60,6 +60,20 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             attrs['cooperative'] = request.user.cooperative
         if not attrs.get('cooperative'):
             raise serializers.ValidationError({'cooperative': 'Coopérative requise.'})
+        if request:
+            from apps.accounts.permissions import can_access_cooperative
+            coop = attrs['cooperative']
+            if not can_access_cooperative(request.user, coop.pk):
+                raise serializers.ValidationError({'cooperative': 'Coopérative inconnue.'})
+            # Quota d'agents par coopérative fixé par la licence du client
+            admin = coop.managed_by
+            try:
+                limit = admin.admin_license.max_agents_per_coop if admin else None
+            except Exception:  # noqa: BLE001
+                limit = None
+            if limit is not None and Agent.objects.filter(cooperative=coop).count() >= limit:
+                raise serializers.ValidationError({'detail': f'Limite atteinte : {limit} agent(s) maximum par coopérative '
+                                                             'pour cet abonnement.'})
         # Normalise les sections (liste de noms non vides) et renseigne « zone » pour l'affichage
         sections = attrs.get('sections')
         if sections is not None:
@@ -241,6 +255,10 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
                     attrs.setdefault('assigned_agent', agent)
         if user and user.role in ('cooperative', 'agent') and self.instance is not None:
             attrs['cooperative'] = self.instance.cooperative   # pas de changement de coopérative
+        if user and user.role in ('owner', 'super_admin') and attrs.get('cooperative') is not None:
+            from apps.accounts.permissions import can_access_cooperative
+            if not can_access_cooperative(user, attrs['cooperative'].pk):
+                raise serializers.ValidationError({'cooperative': 'Coopérative inconnue.'})
         coop = attrs.get('cooperative') or getattr(self.instance, 'cooperative', None)
         if not coop:
             raise serializers.ValidationError({'cooperative': 'Coopérative requise.'})

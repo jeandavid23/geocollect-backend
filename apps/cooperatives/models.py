@@ -20,6 +20,10 @@ class Cooperative(models.Model):
     region = models.CharField(max_length=100, blank=True, verbose_name='Région')
     country = models.CharField(max_length=100, default="Côte d'Ivoire", verbose_name='Pays')
     is_active = models.BooleanField(default=True, verbose_name='Active')
+    # Super admin (client) qui gère la coopérative ; vide = gérée directement par le propriétaire
+    managed_by = models.ForeignKey('accounts.User', null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name='managed_cooperatives', verbose_name='Super admin gestionnaire',
+                                   limit_choices_to={'role': 'super_admin'})
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -13,7 +13,8 @@ class UserManager(BaseUserManager):
         return user
 
     def create_superuser(self, username, password=None, **extra):
-        extra.setdefault('role', 'super_admin')
+        # Un superutilisateur Django est le propriétaire de la plateforme
+        extra.setdefault('role', 'owner')
         extra.setdefault('is_staff', True)
         extra.setdefault('is_superuser', True)
         return self.create_user(username, password, **extra)
@@ -21,6 +22,9 @@ class UserManager(BaseUserManager):
 
 class User(AbstractBaseUser, PermissionsMixin):
     class Role(models.TextChoices):
+        # Propriétaire de la plateforme (GeoLab Service) : gère les super admins (clients) et voit tout
+        OWNER = 'owner', 'Super Super Admin'
+        # Client : ne voit que les coopératives qui lui sont rattachées (Cooperative.managed_by)
         SUPER_ADMIN = 'super_admin', 'Super Administrateur'
         COOPERATIVE = 'cooperative', 'Coopérative'
         AGENT = 'agent', 'Agent Mappeur'
@@ -59,6 +63,10 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return f'{self.full_name} ({self.get_role_display()})'
+
+    @property
+    def is_owner(self):
+        return self.role == self.Role.OWNER
 
     @property
     def is_super_admin(self):
@@ -114,3 +122,39 @@ class Notification(models.Model):
 
     def __str__(self):
         return f'{self.recipient} — {self.title}'
+
+
+class AdminLicense(models.Model):
+    """
+    Autorisations accordées par le propriétaire de la plateforme à un super admin (un client).
+    Quotas vides = illimité. Un super admin sans licence (comptes créés avant les licences) a tous les droits.
+    """
+    MODULES = {
+        'deforestation': 'Analyse déforestation',
+        'rdue': 'Matrice RDUE (forêts classées, enclaves)',
+        'validator': 'Polygon Validator',
+        'registry': 'Registre (tableur)',
+        'legacy': 'Anciens polygones',
+    }
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='admin_license')
+    organization = models.CharField(max_length=255, blank=True, verbose_name='Organisation cliente')
+    max_cooperatives = models.PositiveIntegerField(null=True, blank=True, verbose_name='Coopératives max.')
+    max_agents_per_coop = models.PositiveIntegerField(null=True, blank=True, verbose_name='Agents max. par coopérative')
+    modules = models.JSONField(default=list, blank=True, verbose_name='Modules activés')
+    expires_at = models.DateField(null=True, blank=True, verbose_name="Fin d'abonnement")
+    notes = models.TextField(blank=True, verbose_name='Notes internes')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Licence super admin'
+        verbose_name_plural = 'Licences super admin'
+
+    def __str__(self):
+        return f'Licence de {self.user}'
+
+    @property
+    def is_expired(self):
+        from django.utils import timezone
+        return self.expires_at is not None and self.expires_at < timezone.localdate()

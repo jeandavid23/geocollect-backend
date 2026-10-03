@@ -7,7 +7,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.permissions import IsAgentOrAbove, resolve_cooperative
+from apps.accounts.permissions import IsAgentOrAbove, resolve_cooperative, module_required
 from .models import LegacyParcel, Parcel
 from . import validator
 
@@ -45,7 +45,7 @@ class PolygonValidatorView(APIView):
     Réponse : { "summary": {...}, "results": [...] } (même ordre que les entités analysées ;
               pour une source en base, chaque résultat porte aussi « pk »).
     """
-    permission_classes = [IsAgentOrAbove]
+    permission_classes = [IsAgentOrAbove, module_required('validator')]
 
     def post(self, request):
         try:

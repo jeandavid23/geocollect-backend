@@ -31,4 +31,6 @@ urlpatterns = [
     path('api/v1/parcels/', include('apps.parcels.urls')),
     path('api/v1/dashboard/', include('apps.dashboard.urls')),
     path('api/v1/registry/', include('apps.registry.urls')),
+    # Espace du propriétaire de la plateforme (Super Super Admin)
+    path('api/v1/platform/', include('apps.accounts.platform_urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

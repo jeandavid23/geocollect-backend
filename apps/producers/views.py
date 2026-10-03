@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Agent, Producer
 from .serializers import AgentSerializer, AgentCreateSerializer, ProducerSerializer, ProducerCreateSerializer
-from apps.accounts.permissions import IsSuperAdmin, IsCooperativeOrAdmin, IsAgentOrAbove, resolve_cooperative, scope_to_cooperative
+from apps.accounts.permissions import IsSuperAdmin, IsCooperativeOrAdmin, IsAgentOrAbove, resolve_cooperative, scope_to_cooperative, is_owner
 from utils.field_id import generate_field_id_base, get_next_producer_index
 
 
@@ -32,11 +32,10 @@ class AgentListCreateView(generics.ListCreateAPIView):
               .annotate(parcel_count_annot=Count('parcels'), total_hectares_annot=Sum('parcels__area_hectares'))
               .order_by('created_at', 'id'))
         user = self.request.user
-        if user.role == 'cooperative':
-            qs = qs.filter(cooperative=user.cooperative)
-        elif user.role == 'agent':
-            qs = qs.filter(user=user)
-        return qs
+        if user.role == 'agent':
+            return qs.filter(user=user)
+        # propriétaire → tous ; super admin → agents de ses coopératives ; coopérative → les siens
+        return scope_to_cooperative(qs, user)
 
 
 class AgentDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -49,7 +48,8 @@ class AgentDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_update(self, serializer):
         # la coopérative d'un agent ne peut pas être changée par une coopérative
-        if self.request.user.role != 'super_admin':
+        # seul le propriétaire peut déplacer un agent vers une autre coopérative
+        if not is_owner(self.request.user):
             serializer.validated_data.pop('cooperative', None)
         serializer.save()
 
@@ -70,11 +70,8 @@ class ProducerListCreateView(generics.ListCreateAPIView):
         qs = (Producer.objects.select_related('cooperative', 'assigned_agent__user')
               .annotate(parcel_count_annot=Count('parcels'), total_hectares_annot=Sum('parcels__area_hectares'))
               .order_by('last_name', 'first_name', 'id'))
-        user = self.request.user
-        # Coopérative ET agent voient TOUS les producteurs de la coopérative
-        if user.role in ('cooperative', 'agent') and user.cooperative_id:
-            qs = qs.filter(cooperative_id=user.cooperative_id)
-        return qs
+        # Coopérative et agent : tous les producteurs de leur coopérative ; super admin : ses coopératives
+        return scope_to_cooperative(qs, self.request.user)
 
 
 class ProducerDetailView(generics.RetrieveUpdateDestroyAPIView):

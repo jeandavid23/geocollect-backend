@@ -4,7 +4,8 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.permissions import IsAgentOrAbove, IsCooperativeOrAdmin, resolve_cooperative
+from apps.accounts.permissions import IsAgentOrAbove, IsCooperativeOrAdmin, resolve_cooperative, scope_to_cooperative, module_required
+from apps.accounts.tenancy import has_module
 from .models import LegacyParcel
 
 GEOMETRY_TYPES = {'Polygon', 'MultiPolygon'}
@@ -12,13 +13,18 @@ MAX_FEATURES = 5000  # par envoi : le navigateur découpe les gros fichiers en p
 
 
 def _scoped(request):
-    """Coopérative et agents : leur coopérative. Super admin : tout, ou ?cooperative=<uuid>."""
-    qs = LegacyParcel.objects.all()
+    """Polygones des coopératives accessibles (et module « anciens polygones » activé) ; ?cooperative=<uuid> pour filtrer."""
     user = request.user
-    if user.role in ('cooperative', 'agent'):
-        return qs.filter(cooperative_id=user.cooperative_id)
+    if not has_module(user, 'legacy'):
+        return LegacyParcel.objects.none()
+    qs = scope_to_cooperative(LegacyParcel.objects.all(), user)
     coop_id = request.query_params.get('cooperative')
-    return qs.filter(cooperative_id=coop_id) if coop_id else qs
+    if coop_id and user.role not in ('cooperative', 'agent'):
+        try:
+            qs = qs.filter(cooperative_id=coop_id)
+        except Exception:  # noqa: BLE001
+            return LegacyParcel.objects.none()
+    return qs
 
 
 def _serialize(p):
@@ -41,7 +47,9 @@ class LegacyParcelListView(APIView):
     """
 
     def get_permissions(self):
-        return [IsCooperativeOrAdmin()] if self.request.method == 'DELETE' else [IsAgentOrAbove()]
+        if self.request.method == 'DELETE':
+            return [IsCooperativeOrAdmin(), module_required('legacy')()]
+        return [IsAgentOrAbove()]
 
     def get(self, request):
         qs = _scoped(request).order_by('source_file', 'name', 'id')
@@ -76,7 +84,7 @@ class LegacyParcelImportView(APIView):
              "replace": true, "features": [{"name", "geometry", "properties", "area_hectares"}]}
     Les géométries doivent déjà être en WGS84 (conversion faite dans le navigateur).
     """
-    permission_classes = [IsCooperativeOrAdmin]
+    permission_classes = [IsCooperativeOrAdmin, module_required('legacy')]
 
     def post(self, request):
         cooperative = resolve_cooperative(request, request.data)

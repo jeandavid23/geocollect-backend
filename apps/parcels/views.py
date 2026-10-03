@@ -26,12 +26,9 @@ class ParcelListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         qs = Parcel.objects.select_related('producer', 'cooperative', 'agent__user').order_by('-created_at', 'id')
-        user = self.request.user
-        # Coopérative ET agent voient TOUTES les parcelles de la coopérative
-        # (l'agent repère ainsi les parcelles déjà mappées par ses collègues)
-        if user.role in ('cooperative', 'agent'):
-            qs = qs.filter(cooperative_id=user.cooperative_id)
-        return qs
+        # Coopérative ET agent voient TOUTES les parcelles de la coopérative (l'agent repère celles
+        # déjà mappées par ses collègues) ; super admin : ses coopératives ; propriétaire : tout
+        return scope_to_cooperative(qs, self.request.user)
 
 
 class ParcelDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -70,9 +67,7 @@ class ParcelGeoJSONView(APIView):
 
     def get(self, request):
         qs = Parcel.objects.select_related('producer')
-        user = request.user
-        if user.role in ('cooperative', 'agent'):
-            qs = qs.filter(cooperative_id=user.cooperative_id)
+        qs = scope_to_cooperative(qs, request.user)
 
         features = [ParcelGeoJSONSerializer(p).data for p in qs]
         return Response({'type': 'FeatureCollection', 'features': features})
@@ -84,9 +79,7 @@ class ParcelExportCSVView(APIView):
 
     def get(self, request):
         qs = Parcel.objects.select_related('producer', 'agent__user')
-        user = request.user
-        if user.role == 'cooperative':
-            qs = qs.filter(cooperative=user.cooperative)
+        qs = scope_to_cooperative(qs, request.user)
 
         response = HttpResponse(content_type='text/csv; charset=utf-8')
         response['Content-Disposition'] = 'attachment; filename="parcelles_eudr.csv"'

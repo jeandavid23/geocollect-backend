@@ -6,11 +6,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import User, ActivityLog, Notification
 from .serializers import (
-    CustomTokenObtainPairSerializer, UserSerializer,
+    CustomTokenObtainPairSerializer, UserSerializer, MeSerializer,
     UserCreateSerializer, ChangePasswordSerializer, ActivityLogSerializer,
     NotificationSerializer,
 )
-from .permissions import IsSuperAdmin
+from .permissions import IsSuperAdmin, IsOwner, scope_users, can_manage_user
 from .throttles import LoginThrottle, PasswordThrottle
 
 
@@ -48,7 +48,7 @@ class LogoutView(APIView):
 
 
 class MeView(generics.RetrieveUpdateAPIView):
-    serializer_class = UserSerializer
+    serializer_class = MeSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
@@ -68,26 +68,58 @@ class ChangePasswordView(APIView):
 
 
 class UserListCreateView(generics.ListCreateAPIView):
-    queryset = User.objects.all()
-    permission_classes = [IsSuperAdmin]
+    """
+    GET  : comptes visibles (propriétaire → tous ; super admin → lui-même et ses coopératives/agents).
+    POST : réservé au propriétaire (les super admins créent leurs comptes via coopératives et agents ;
+           les super admins se créent via /platform/admins/).
+    """
+    def get_permissions(self):
+        return [IsOwner()] if self.request.method == 'POST' else [IsSuperAdmin()]
+
+    def get_queryset(self):
+        return scope_users(User.objects.select_related('cooperative').all(), self.request.user)
 
     def get_serializer_class(self):
         return UserCreateSerializer if self.request.method == 'POST' else UserSerializer
 
 
 class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [IsSuperAdmin]
+
+    def get_queryset(self):
+        return scope_users(User.objects.select_related('cooperative').all(), self.request.user)
+
+    def _check(self, target):
+        from rest_framework.exceptions import PermissionDenied
+        if target.pk == self.request.user.pk:
+            raise PermissionDenied('Utilisez « Mon compte » pour modifier votre propre profil.')
+        if not can_manage_user(self.request.user, target):
+            raise PermissionDenied("Vous n'avez pas le droit de gérer ce compte.")
+
+    def perform_update(self, serializer):
+        self._check(serializer.instance)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check(instance)
+        if instance.role == 'owner':
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Le compte propriétaire ne peut pas être supprimé.')
+        instance.delete()
 
 
 class ToggleUserActiveView(APIView):
     permission_classes = [IsSuperAdmin]
 
     def post(self, request, pk):
-        user = generics.get_object_or_404(User, pk=pk)
+        from .tenancy import invalidate_tenant_cache
+        user = generics.get_object_or_404(scope_users(User.objects.all(), request.user), pk=pk)
+        if user.pk == request.user.pk or user.role == 'owner' or not can_manage_user(request.user, user):
+            return Response({'detail': 'Action non autorisée.'}, status=status.HTTP_403_FORBIDDEN)
         user.is_active = not user.is_active
-        user.save()
+        user.save(update_fields=['is_active'])
+        invalidate_tenant_cache()
         return Response({'is_active': user.is_active})
 
 
@@ -101,12 +133,9 @@ class ResetPasswordView(APIView):
         target = generics.get_object_or_404(User, pk=pk)
         requester = request.user
 
-        allowed = (
-            requester.role == 'super_admin'
-            or (requester.role == 'cooperative'
-                and target.role == 'agent'
-                and target.cooperative_id == requester.cooperative_id)
-        )
+        # Propriétaire → tout le monde ; super admin → comptes de ses coopératives ;
+        # coopérative → ses agents. Jamais le compte propriétaire (sauf par lui-même via « Mon compte »).
+        allowed = target.pk != requester.pk and target.role != 'owner' and can_manage_user(requester, target)
         if not allowed:
             return Response({'detail': 'Action non autorisée.'}, status=status.HTTP_403_FORBIDDEN)
 
@@ -140,6 +169,9 @@ class ActivityLogListView(generics.ListAPIView):
 
     def get_queryset(self):
         qs = ActivityLog.objects.select_related('user').order_by('-timestamp')
+        if self.request.user.role != 'owner':
+            # super admin : journaux de ses propres comptes uniquement
+            qs = qs.filter(user__in=scope_users(User.objects.all(), self.request.user))
         user_id = self.request.query_params.get('user')
         if user_id:
             qs = qs.filter(user_id=user_id)

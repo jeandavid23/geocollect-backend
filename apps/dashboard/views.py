@@ -8,7 +8,7 @@ from rest_framework import permissions
 from apps.cooperatives.models import Cooperative
 from apps.producers.models import Producer, Agent
 from apps.parcels.models import Parcel
-from apps.accounts.permissions import IsAgentOrAbove, IsCooperativeOrAdmin, IsSuperAdmin
+from apps.accounts.permissions import IsAgentOrAbove, IsCooperativeOrAdmin, IsSuperAdmin, scope_to_cooperative, managed_cooperatives
 
 
 class AdminDashboardView(APIView):
@@ -18,24 +18,28 @@ class AdminDashboardView(APIView):
         today = timezone.now().date()
         week_ago = today - timedelta(days=7)
 
-        coop_count = Cooperative.objects.filter(is_active=True).count()
-        producer_count = Producer.objects.filter(is_active=True).count()
-        parcel_count = Parcel.objects.count()
-        agent_count = Agent.objects.filter(is_active=True).count()
-        total_ha = Parcel.objects.aggregate(t=Sum('area_hectares'))['t'] or 0
+        # propriétaire : toute la plateforme ; super admin : uniquement ses coopératives
+        user = request.user
+        coops = managed_cooperatives(user)
+        parcels = scope_to_cooperative(Parcel.objects.all(), user)
+        coop_count = coops.filter(is_active=True).count()
+        producer_count = scope_to_cooperative(Producer.objects.filter(is_active=True), user).count()
+        parcel_count = parcels.count()
+        agent_count = scope_to_cooperative(Agent.objects.filter(is_active=True), user).count()
+        total_ha = parcels.aggregate(t=Sum('area_hectares'))['t'] or 0
 
-        eudr = Parcel.objects.values('eudr_status').annotate(count=Count('id'))
+        eudr = parcels.values('eudr_status').annotate(count=Count('id'))
         eudr_map = {e['eudr_status']: e['count'] for e in eudr}
 
         # Daily progress last 14 days
         daily = []
         for i in range(13, -1, -1):
             day = today - timedelta(days=i)
-            count = Parcel.objects.filter(created_at__date=day).count()
-            ha = Parcel.objects.filter(created_at__date=day).aggregate(s=Sum('area_hectares'))['s'] or 0
+            count = parcels.filter(created_at__date=day).count()
+            ha = parcels.filter(created_at__date=day).aggregate(s=Sum('area_hectares'))['s'] or 0
             daily.append({'date': day.strftime('%d %b'), 'parcels': count, 'hectares': round(ha, 2)})
 
-        cooperatives = Cooperative.objects.annotate(
+        cooperatives = coops.annotate(
             p_count=Count('parcels'),
             ha=Sum('parcels__area_hectares'),
         ).values('id', 'name', 'region', 'p_count', 'ha')[:10]
@@ -49,7 +53,7 @@ class AdminDashboardView(APIView):
             'eudr_compliant': eudr_map.get('compliant', 0),
             'eudr_non_compliant': eudr_map.get('non_compliant', 0),
             'eudr_pending': eudr_map.get('pending', 0),
-            'avg_eudr_score': Parcel.objects.filter(eudr_score__isnull=False).aggregate(a=Avg('eudr_score'))['a'],
+            'avg_eudr_score': parcels.filter(eudr_score__isnull=False).aggregate(a=Avg('eudr_score'))['a'],
             'daily_progress': daily,
             'cooperatives': list(cooperatives),
         })

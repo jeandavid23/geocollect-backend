@@ -5,6 +5,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import deforestation as dc
+from apps.accounts.permissions import module_required
+from apps.accounts.tenancy import has_module
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +28,7 @@ class DeforestationAnalyzeView(APIView):
       }
     Réponse : { "count", "standard", "cutoff_year", "source", "results": [...] } (même ordre que features)
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, module_required('deforestation')]
 
     def post(self, request):
         features = request.data.get('features') or []
@@ -45,6 +47,9 @@ class DeforestationAnalyzeView(APIView):
             alert_pct = max(0.0, float(request.data.get('alert_pct', 1.0)))
             treecover_min = min(100, max(0, int(request.data.get('treecover_min', dc.FAO_TREECOVER_MIN))))
             apply_rdue = request.data.get('apply_rdue') in (True, 'true', '1', 1)
+            if apply_rdue and not has_module(request.user, 'rdue'):
+                return Response({'detail': "Le module « Matrice RDUE » n'est pas activé pour votre organisation."},
+                                status=status.HTTP_403_FORBIDDEN)
             forest_min_frac = min(1.0, max(0.0, float(request.data.get('forest_min_frac', 0.10))))
         except (TypeError, ValueError):
             return Response({'detail': 'Paramètres invalides.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -70,7 +75,7 @@ class DeforestationAnalyzeView(APIView):
 
 class LandZoneListView(APIView):
     """GET /api/v1/parcels/landuse/ : zones foncières RDUE (carte) — FeatureCollection."""
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, module_required('rdue')]
 
     def get(self, request):
         from .models import LandZone

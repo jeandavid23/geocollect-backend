@@ -62,6 +62,14 @@ class ParcelCreateSerializer(serializers.ModelSerializer):
             agent = attrs.get('agent')
             if agent is not None and agent.cooperative_id != user.cooperative_id:
                 raise serializers.ValidationError({'agent': 'Agent inconnu.'})
+        elif role == 'super_admin':
+            from apps.accounts.permissions import can_access_cooperative
+            producer = attrs.get('producer') or getattr(self.instance, 'producer', None)
+            if producer is not None and not can_access_cooperative(user, producer.cooperative_id):
+                raise serializers.ValidationError({'producer': 'Producteur inconnu.'})
+            agent = attrs.get('agent')
+            if agent is not None and not can_access_cooperative(user, agent.cooperative_id):
+                raise serializers.ValidationError({'agent': 'Agent inconnu.'})
         producer = attrs.get('producer')
         if not attrs.get('cooperative') and producer:
             attrs['cooperative'] = producer.cooperative

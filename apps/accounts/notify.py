@@ -1,16 +1,18 @@
-"""Création de notifications : destinataires = membres de la coopérative + tous les super admins."""
+"""Création de notifications : membres de la coopérative + son super admin gestionnaire + le propriétaire."""
 
 
 def notify_cooperative(cooperative, *, title, message='', ntype='info', exclude_user=None):
-    """Crée une notification pour tous les utilisateurs de la coopérative + tous les super admins."""
+    """Notifie les utilisateurs de la coopérative, son super admin gestionnaire et le propriétaire."""
     from .models import User, Notification
 
     recipients = set()
     if cooperative:
         for u in User.objects.filter(cooperative=cooperative, is_active=True):
             recipients.add(u.id)
-    # Super admins reçoivent TOUTES les notifications
-    for u in User.objects.filter(role='super_admin', is_active=True):
+    # Le super admin qui gère la coopérative (son client) et le propriétaire de la plateforme
+    if cooperative and cooperative.managed_by_id:
+        recipients.add(cooperative.managed_by_id)
+    for u in User.objects.filter(role='owner', is_active=True):
         recipients.add(u.id)
     if exclude_user is not None:
         recipients.discard(getattr(exclude_user, 'id', exclude_user))

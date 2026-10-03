@@ -116,6 +116,8 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 30 * 1024 * 1024
 CACHES = {
     'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
     'shared': {'BACKEND': 'django.core.cache.backends.db.DatabaseCache', 'LOCATION': 'geocollect_cache'},
+    # État des clients (actif, modules) : 60 s par processus, voir apps/accounts/tenancy.py
+    'tenancy': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'tenancy'},
 }
 
 # ─── Custom User Model ──────────────────────────────────────────────────────────
@@ -126,7 +128,8 @@ AUTH_USER_MODEL = 'accounts.User'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # JWT + contrôle de l'organisation (suspendue / abonnement expiré → accès refusé)
+        'apps.accounts.authentication.TenantJWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
