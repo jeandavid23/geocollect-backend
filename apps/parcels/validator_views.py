@@ -9,6 +9,7 @@ from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsAgentOrAbove, resolve_cooperative, module_required
 from .models import LegacyParcel, Parcel
+from apps.accounts.usage import log_tool_run
 from . import validator
 
 log = logging.getLogger(__name__)
@@ -94,4 +95,5 @@ class PolygonValidatorView(APIView):
             for r, f in zip(out['results'], features):
                 r.setdefault('geometry', f['geometry'])
         out['summary']['source'] = source or 'fichier'
+        log_tool_run(request, 'validator', len(features))
         return Response(out)

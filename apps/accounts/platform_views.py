@@ -8,8 +8,12 @@ Espace du propriétaire de la plateforme (Super Super Admin) : /api/v1/platform/
   PATCH  admins/<id>/                 modifie l'identité, la licence (quotas, modules, échéance), la suspension
   DELETE admins/<id>/                 supprime (refusé s'il gère encore des coopératives)
   POST   cooperatives/<id>/assign/    rattache une coopérative à un super admin (ou au propriétaire : null)
+  POST   modules/bulk/                active / retire un module pour tous les clients à licence restreinte
 """
+from datetime import timedelta
+
 from django.db import transaction
+from django.utils import timezone
 from django.db.models import Count, Sum
 from rest_framework import serializers, status
 from rest_framework.response import Response
@@ -110,6 +114,61 @@ def _log(request, action, target_id, details=''):
                                ip_address=request.META.get('REMOTE_ADDR'))
 
 
+USAGE_DAYS = 30
+EXPIRY_WARNING_DAYS = 30
+
+
+def usage_since(days=USAGE_DAYS):
+    """Traitements des N derniers jours : {client_id | None: {module: {'runs', 'items'}}} + total plateforme."""
+    since = timezone.now() - timedelta(days=days)
+    rows = ActivityLog.objects.filter(action='run_tool', timestamp__gte=since).values_list(
+        'resource', 'details', 'user__role', 'user_id', 'user__cooperative__managed_by')
+    per_client, total = {}, {}
+    for module, details, role, user_id, managed_by in rows.iterator():
+        client = user_id if role == 'super_admin' else managed_by
+        try:
+            n = int(details or 0)
+        except ValueError:
+            n = 0
+        for bucket in (per_client.setdefault(str(client) if client else None, {}), total):
+            m = bucket.setdefault(module, {'runs': 0, 'items': 0})
+            m['runs'] += 1
+            m['items'] += n
+    return per_client, total
+
+
+def platform_alerts(admins):
+    """Points d'attention pour le propriétaire."""
+    today = timezone.localdate()
+    alerts = []
+    for a in admins:
+        name = a.full_name
+        try:
+            lic = a.admin_license
+            name = lic.organization or name
+        except Exception:  # noqa: BLE001
+            lic = None
+        if not a.is_active:
+            alerts.append({'level': 'error', 'kind': 'suspended', 'admin': str(a.id), 'message': f'{name} : accès suspendu.'})
+            continue
+        if lic and lic.expires_at:
+            left = (lic.expires_at - today).days
+            if left < 0:
+                alerts.append({'level': 'error', 'kind': 'expired', 'admin': str(a.id),
+                               'message': f'{name} : abonnement expiré depuis le {lic.expires_at:%d/%m/%Y} (accès bloqué).'})
+            elif left <= EXPIRY_WARNING_DAYS:
+                alerts.append({'level': 'warning', 'kind': 'expiring', 'admin': str(a.id),
+                               'message': f'{name} : abonnement expire dans {left} jour(s) ({lic.expires_at:%d/%m/%Y}).'})
+        if lic and lic.max_cooperatives is not None and a.managed_cooperatives.count() >= lic.max_cooperatives:
+            alerts.append({'level': 'info', 'kind': 'quota', 'admin': str(a.id),
+                           'message': f'{name} : quota de coopératives atteint ({lic.max_cooperatives}).'})
+    n = Cooperative.objects.filter(managed_by__isnull=True).count()
+    if n:
+        alerts.append({'level': 'info', 'kind': 'unassigned', 'admin': None,
+                       'message': f'{n} coopérative(s) rattachée(s) à aucun client (gérées par vous).'})
+    return alerts
+
+
 class PlatformOverviewView(APIView):
     permission_classes = [IsOwner]
 
@@ -123,10 +182,12 @@ class PlatformOverviewView(APIView):
             row['cooperative__managed_by']: row for row in Parcel.objects.values('cooperative__managed_by').annotate(
                 parcels=Count('id'), ha=Sum('area_hectares'))
         }
+        usage_by_client, usage_total = usage_since()
         clients = []
         for a in admins:
             clients.append({
                 **admin_payload(a),
+                'usage': usage_by_client.get(str(a.id), {}),
                 'parcels': parcels_by_admin.get(a.id, {}).get('parcels', 0),
                 'hectares': round(parcels_by_admin.get(a.id, {}).get('ha') or 0, 2),
             })
@@ -144,6 +205,10 @@ class PlatformOverviewView(APIView):
                 'users': User.objects.count(),
             },
             'clients': clients,
+            'usage': usage_total,
+            'usage_owner': usage_by_client.get(None, {}),
+            'usage_days': USAGE_DAYS,
+            'alerts': platform_alerts(admins),
             'modules': [{'id': k, 'label': v} for k, v in AdminLicense.MODULES.items()],
         })
 
@@ -272,3 +337,31 @@ class PlatformAssignCooperativeView(APIView):
         _log(request, 'assign_cooperative', coop.id, admin.full_name if admin else 'propriétaire')
         return Response({'id': str(coop.id), 'managed_by': str(admin.id) if admin else None,
                          'managed_by_name': (admin.full_name if admin else None)})
+
+
+class PlatformModuleBulkView(APIView):
+    """
+    POST {module: "<id>", grant: true|false}
+    Active (ou retire) un module pour tous les clients dont la licence liste ses modules.
+    Les clients sans licence ont déjà tous les modules : ils ne sont pas concernés.
+    """
+    permission_classes = [IsOwner]
+
+    def post(self, request):
+        module = request.data.get('module')
+        if module not in AdminLicense.MODULES:
+            return Response({'detail': 'Module inconnu.'}, status=status.HTTP_400_BAD_REQUEST)
+        grant = request.data.get('grant', True)
+        grant = grant if isinstance(grant, bool) else str(grant).lower() in ('1', 'true', 'oui')
+        changed = 0
+        with transaction.atomic():
+            for lic in AdminLicense.objects.select_for_update().filter(user__role='super_admin'):
+                mods = set(lic.modules or [])
+                new = mods | {module} if grant else mods - {module}
+                if new != mods:
+                    lic.modules = sorted(new)
+                    lic.save(update_fields=['modules'])
+                    changed += 1
+        invalidate_tenant_cache()
+        _log(request, 'grant_module_all' if grant else 'revoke_module_all', module, f'{changed} client(s)')
+        return Response({'module': module, 'grant': grant, 'changed': changed})

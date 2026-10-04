@@ -135,6 +135,8 @@ class AdminLicense(models.Model):
         'validator': 'Polygon Validator',
         'registry': 'Registre (tableur)',
         'legacy': 'Anciens polygones',
+        'selfintersection': 'Self-intersection (nettoyage)',
+        'gmr': 'Polygon & GMR (registre × polygones)',
     }
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='admin_license')
