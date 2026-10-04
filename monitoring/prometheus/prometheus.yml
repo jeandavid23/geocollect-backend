@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 60s
+  scrape_timeout: 30s
+
+scrape_configs:
+  # API Django : en local (gunicorn sur le port 8001) ; pour la production, remplacez la cible par
+  # geocollect-backend.onrender.com, scheme https (ou utilisez Grafana Cloud, voir README.md).
+  - job_name: geocollect-api
+    metrics_path: /api/v1/monitoring/metrics/
+    scheme: http
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/token     # même valeur que MONITORING_TOKEN côté Django
+    static_configs:
+      - targets: ["host.docker.internal:8001"]

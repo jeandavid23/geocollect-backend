@@ -1,0 +1,38 @@
+# Supervision locale de GeoCollect : Prometheus (collecte) + Grafana (tableaux de bord, alertes).
+#   cd monitoring && cp .env.example .env && docker compose up -d
+#   Grafana : http://localhost:3001  (admin / mot de passe de .env)
+# En production, Grafana Cloud collecte directement l'API Render (voir README.md) : ce fichier sert aux essais.
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/token:/etc/prometheus/token:ro
+      - prometheus-data:/prometheus
+    ports: ["9091:9090"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Définissez GRAFANA_ADMIN_PASSWORD dans monitoring/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DEFAULT_LOCALE: fr-FR
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/geocollect-tech.json
+      ALERT_EMAIL: ${ALERT_EMAIL:-jeandavidkyao@gmail.com}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["3001:3000"]
+    depends_on: [prometheus]
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:

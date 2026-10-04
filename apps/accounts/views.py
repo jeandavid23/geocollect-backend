@@ -20,12 +20,15 @@ class LoginView(TokenObtainPairView):
 
     def post(self, request, *args, **kwargs):
         from .notify import notify_login, notify_failed_login, client_ip, _device
+        from apps.monitoring.metrics import LOGINS, safe_inc
         try:
             response = super().post(request, *args, **kwargs)
         except Exception:
+            safe_inc(LOGINS, result='echec')
             if isinstance(request.data, dict):
                 notify_failed_login(request.data.get('username'), request)
             raise
+        safe_inc(LOGINS, result='succes' if response.status_code == 200 else 'echec')
         if response.status_code == 200:
             user_data = response.data.get('user', {})
             uid = user_data.get('id')

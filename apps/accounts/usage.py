@@ -10,6 +10,9 @@ log = logging.getLogger(__name__)
 
 
 def log_tool_run(request, module, items):
+    from apps.monitoring.metrics import TOOL_ITEMS, TOOL_RUNS, safe_inc
+    safe_inc(TOOL_RUNS, module=module)
+    safe_inc(TOOL_ITEMS, int(items or 0), module=module)
     try:
         ActivityLog.objects.create(user=request.user, action='run_tool', resource=module,
                                    details=str(int(items or 0)), ip_address=request.META.get('REMOTE_ADDR'))

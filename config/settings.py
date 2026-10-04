@@ -36,9 +36,12 @@ INSTALLED_APPS = [
     'apps.dashboard',
     'apps.registry',
     'apps.reports',
+    'apps.monitoring',
 ]
 
 MIDDLEWARE = [
+    # Mesures des requêtes (Grafana) : en premier pour compter aussi les réponses des autres middlewares
+    'apps.monitoring.middleware.PrometheusMiddleware',
     'django.middleware.security.SecurityMiddleware',
     # Compresse les grosses réponses JSON (milliers de producteurs / polygones)
     'django.middleware.gzip.GZipMiddleware',
@@ -172,13 +175,20 @@ SIMPLE_JWT = {
     'USER_ID_CLAIM': 'user_id',
 }
 
+# ─── Supervision (Grafana) ─────────────────────────────────────────────────
+# Jeton exigé pour lire /api/v1/monitoring/metrics/ (vide = point désactivé)
+MONITORING_TOKEN = config('MONITORING_TOKEN', default='')
+
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
     default='http://localhost:5173,https://localhost:5173,http://localhost:3000',
     cast=lambda v: [s.strip() for s in v.split(',')]
-) + ['https://sunny-pegasus-8ea076.netlify.app']   # site de production (même si la variable manque)
+) + [
+    'https://sunny-pegasus-8ea076.netlify.app',   # site de production Netlify (même si la variable manque)
+    'https://geocollect-eudr.vercel.app',          # site de production Vercel
+]
 # En développement seulement : réseau local (téléphone). En production, seules les origines
 # de CORS_ALLOWED_ORIGINS (le site Netlify) sont acceptées — plus de joker *.netlify.app.
 CORS_ALLOWED_ORIGIN_REGEXES = [

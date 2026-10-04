@@ -1,0 +1,129 @@
+# Règles d'alerte GeoCollect (Grafana Unified Alerting). Mêmes requêtes que les tableaux de bord.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: GeoLab Service
+    receivers:
+      - uid: geolab-email
+        type: email
+        settings:
+          addresses: $ALERT_EMAIL
+          singleEmail: true
+
+policies:
+  - orgId: 1
+    receiver: GeoLab Service
+    group_by: [alertname]
+    group_wait: 1m
+    group_interval: 10m
+    repeat_interval: 4h
+
+groups:
+  - orgId: 1
+    name: GeoCollect
+    folder: GeoCollect EUDR
+    interval: 1m
+    rules:
+      - uid: geocollect-api-down
+        title: API GeoCollect indisponible
+        condition: C
+        for: 5m
+        noDataState: Alerting
+        execErrState: Alerting
+        annotations:
+          summary: Le serveur Render ne répond plus à la collecte des mesures depuis 5 minutes.
+        labels: { severity: critique }
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus-geocollect
+            model: { refId: A, expr: 'max(up{job="geocollect-api"})', instant: true }
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: lt, params: [1] } }] }
+
+      - uid: geocollect-5xx
+        title: Taux d'erreurs serveur élevé
+        condition: C
+        for: 10m
+        noDataState: OK
+        annotations:
+          summary: Plus de 5 % des réponses de l'API sont des erreurs 500 depuis 10 minutes.
+        labels: { severity: haute }
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus-geocollect
+            model: { refId: A, instant: true, expr: '100 * sum(rate(geocollect_http_requests_total{status=~"5.."}[15m])) / clamp_min(sum(rate(geocollect_http_requests_total[15m])), 1e-9)' }
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [5] } }] }
+
+      - uid: geocollect-latency
+        title: API lente
+        condition: C
+        for: 10m
+        noDataState: OK
+        annotations:
+          summary: 95 % des requêtes (hors traitements lourds) mettent plus de 3 s depuis 10 minutes.
+        labels: { severity: moyenne }
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus-geocollect
+            model: { refId: A, instant: true, expr: 'histogram_quantile(0.95, sum by (le) (rate(geocollect_http_request_duration_seconds_bucket{route!~"deforestation|validator|selfintersection|legacy/import|producers/bulk|registry/import|reports|gis/save"}[15m])))' }
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [3] } }] }
+
+      - uid: geocollect-db
+        title: Base de données lente
+        condition: C
+        for: 10m
+        noDataState: OK
+        annotations:
+          summary: La base Neon répond en plus de 0,5 s depuis 10 minutes.
+        labels: { severity: moyenne }
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus-geocollect
+            model: { refId: A, instant: true, expr: 'max(geocollect_db_latency_seconds)' }
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [0.5] } }] }
+
+      - uid: geocollect-bruteforce
+        title: Nombreuses connexions échouées
+        condition: C
+        for: 0m
+        noDataState: OK
+        annotations:
+          summary: Plus de 30 mots de passe erronés en 15 minutes (attaque possible).
+        labels: { severity: haute }
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus-geocollect
+            model: { refId: A, instant: true, expr: 'sum(increase(geocollect_logins_total{result="echec"}[15m]))' }
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [30] } }] }
+
+      - uid: geocollect-expiry
+        title: Abonnement client bientôt expiré
+        condition: C
+        for: 0m
+        noDataState: OK
+        annotations:
+          summary: Au moins un client (super admin) a un abonnement qui expire dans 7 jours ou moins.
+        labels: { severity: info }
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus-geocollect
+            model: { refId: A, instant: true, expr: 'max(geocollect_clients_expiring_7d)' }
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [0] } }] }
