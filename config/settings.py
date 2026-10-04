@@ -178,6 +178,8 @@ SIMPLE_JWT = {
 # ─── Supervision (Grafana) ─────────────────────────────────────────────────
 # Jeton exigé pour lire /api/v1/monitoring/metrics/ (vide = point désactivé)
 MONITORING_TOKEN = config('MONITORING_TOKEN', default='')
+# Indicateurs métier recalculés au plus toutes les N secondes (la base Neon gratuite peut dormir entre deux)
+MONITORING_BUSINESS_TTL = config('MONITORING_BUSINESS_TTL', default=900, cast=int)
 
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 

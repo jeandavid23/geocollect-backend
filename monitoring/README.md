@@ -27,9 +27,11 @@ Le dossier `grafana/` contient :
    - Intervalle : 1 minute
 
    La collecte toutes les minutes garde aussi le serveur Render gratuit éveillé : il n'y a plus d'attente de 50 s au premier chargement. Un seul service tourne 24 h/24 dans les 750 h gratuites par mois.
+
+   **Base Neon** : la collecte des mesures techniques ne touche pas la base. Les indicateurs métier (comptages) sont recalculés au plus toutes les 15 min (variable `MONITORING_BUSINESS_TTL`, en secondes). La base gratuite peut donc se mettre en veille entre deux calculs. Ne descendez pas sous 900 s, sinon le quota mensuel de calcul de l'offre gratuite de Neon risque d'être épuisé.
 4. **Tableaux de bord.** Ouvrez **Dashboards → New → Import** et importez les deux fichiers JSON du dossier `grafana/dashboards/`. Choisissez la source Prometheus de votre compte, nommée `grafanacloud-…-prom`.
 5. **Alertes.** Ouvrez **Alerting → Alert rules → New alert rule** et recopiez les requêtes de `provisioning/alerting/geocollect-alerts.yml`. Vous pouvez aussi l'importer avec `grafana-cli` ou l'API de provisioning. Pour le point de contact, utilisez votre e-mail, ou WhatsApp et Telegram par webhook.
-6. **Disponibilité vue de l'extérieur** (facultatif). Ouvrez **Testing & synthetics → Synthetic Monitoring → Add check → HTTP**, avec l'URL `https://geocollect-backend.onrender.com/api/v1/monitoring/health/`, toutes les 1 à 5 min, depuis Paris ou Francfort.
+6. **Disponibilité vue de l'extérieur** (facultatif). Ouvrez **Testing & synthetics → Synthetic Monitoring → Add check → HTTP**, avec l'URL `https://geocollect-backend.onrender.com/api/v1/monitoring/health/`, toutes les 1 à 5 min, depuis Paris ou Francfort. Choisissez un intervalle de 15 min : chaque vérification interroge la base.
 
 ## Essai local (Docker)
 

@@ -1,18 +1,19 @@
 """
-Indicateurs métier calculés en base à chaque lecture par Grafana (mis en cache 60 s).
+Indicateurs métier calculés en base, au plus une fois toutes les MONITORING_BUSINESS_TTL secondes (15 min par défaut).
+Le cache est en mémoire (pas dans la base) : la collecte de Grafana chaque minute ne réveille donc pas la base Neon,
+qui peut se mettre en veille entre deux calculs (quota de calcul de l'offre gratuite préservé).
 Aucune donnée personnelle : uniquement des comptages.
 """
 import time
 from datetime import timedelta
 
-from django.core.cache import caches
+from django.conf import settings
 from django.db import connection
 from django.db.models import Count, Sum
 from django.utils import timezone
 from prometheus_client.core import GaugeMetricFamily
 
-CACHE_KEY = 'monitoring:business'
-CACHE_TTL = 60
+_cache = {'at': 0.0, 'data': None}
 
 
 def _compute():
@@ -69,11 +70,10 @@ def _compute():
 
 class BusinessCollector:
     def collect(self):
-        shared = caches['shared']
-        data = shared.get(CACHE_KEY)
-        if data is None:
-            data = _compute()
-            shared.set(CACHE_KEY, data, CACHE_TTL)
+        ttl = getattr(settings, 'MONITORING_BUSINESS_TTL', 900)
+        if _cache['data'] is None or time.time() - _cache['at'] > ttl:
+            _cache['data'], _cache['at'] = _compute(), time.time()
+        data = _cache['data']
 
         def g(name, doc, labels=None):
             return GaugeMetricFamily(name, doc, labels=labels or [])
