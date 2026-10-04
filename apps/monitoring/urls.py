@@ -4,6 +4,8 @@ from . import views
 
 urlpatterns = [
     path('metrics/', views.metrics, name='monitoring_metrics'),
+    # sans barre finale aussi : Grafana Cloud ne suit pas la redirection (et perdrait l'authentification)
+    path('metrics', views.metrics),
     # sans barre finale : pas de redirection 301 (certains collecteurs perdent l'authentification en la suivant)
     path('metrics', views.metrics),
     path('health/', views.health, name='monitoring_health'),
