@@ -80,6 +80,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "bool_on_off",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -142,6 +143,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -191,7 +193,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "100 * sum(rate(geocollect_http_requests_total{status=~\"5..\"}[15m])) / clamp_min(sum(rate(geocollect_http_requests_total[15m])), 1e-9)",
+          "expr": "100 * (sum(rate(geocollect_http_requests_total{status=~\"5..\"}[15m])) or vector(0)) / clamp_min(sum(rate(geocollect_http_requests_total[15m])), 1e-9)",
           "legendFormat": "",
           "instant": true,
           "range": false,
@@ -201,6 +203,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -268,6 +271,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -335,6 +339,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -402,6 +407,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -480,6 +486,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -552,6 +559,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "noValue": "Rien sur la période",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -608,6 +616,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "noValue": "Rien sur la période",
           "color": {
             "mode": "continuous-GrYlRd"
           },
@@ -659,6 +668,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "color": {
             "mode": "continuous-GrYlRd"
           },
@@ -730,6 +740,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 2,
@@ -784,6 +795,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 2,
@@ -838,6 +850,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 2,
@@ -892,6 +905,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 2,

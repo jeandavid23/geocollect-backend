@@ -80,6 +80,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -138,6 +139,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -196,6 +198,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -254,6 +257,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -312,6 +316,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -371,6 +376,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -433,6 +439,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -491,6 +498,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -549,6 +557,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -607,6 +616,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -665,6 +675,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -723,6 +734,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -805,6 +817,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -1011,6 +1024,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "color": {
             "mode": "continuous-GrYlRd"
           },
@@ -1062,6 +1076,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "color": {
             "mode": "continuous-GrYlRd"
           },
@@ -1124,6 +1139,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 2,
@@ -1178,6 +1194,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 2,
@@ -1234,6 +1251,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "color": {
             "mode": "continuous-GrYlRd"
           },
@@ -1285,6 +1303,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "color": {
             "mode": "continuous-GrYlRd"
           },
@@ -1336,6 +1355,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "Rien sur la période",
           "color": {
             "mode": "continuous-GrYlRd"
           },

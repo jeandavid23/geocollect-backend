@@ -36,7 +36,7 @@ def stat(title, expr, x, y, w=4, h=4, unit='short', thresholds=None, decimals=No
     steps = thresholds or [{'color': 'green', 'value': None}]
     p = {'id': nid(), 'type': 'stat', 'title': title, 'description': desc, 'datasource': DS, 'gridPos': {'x': x, 'y': y, 'w': w, 'h': h},
          'targets': refs([target(expr, instant=True)]),
-         'fieldConfig': {'defaults': {'unit': unit, 'thresholds': {'mode': 'absolute', 'steps': steps}, **({'decimals': decimals} if decimals is not None else {})}, 'overrides': []},
+         'fieldConfig': {'defaults': {'unit': unit, 'noValue': '0', 'thresholds': {'mode': 'absolute', 'steps': steps}, **({'decimals': decimals} if decimals is not None else {})}, 'overrides': []},
          'options': {'reduceOptions': {'calcs': ['lastNotNull'], 'fields': '', 'values': False}, 'colorMode': color_mode, 'graphMode': 'area', 'textMode': 'auto', 'justifyMode': 'auto', 'orientation': 'auto'}}
     return p
 
@@ -44,7 +44,7 @@ def stat(title, expr, x, y, w=4, h=4, unit='short', thresholds=None, decimals=No
 def ts(title, targets, x, y, w=12, h=8, unit='short', stack=False, desc='', bars=False):
     return {'id': nid(), 'type': 'timeseries', 'title': title, 'description': desc, 'datasource': DS, 'gridPos': {'x': x, 'y': y, 'w': w, 'h': h},
             'targets': refs(targets),
-            'fieldConfig': {'defaults': {'unit': unit, 'custom': {'drawStyle': 'bars' if bars else 'line', 'lineWidth': 2, 'fillOpacity': 15,
+            'fieldConfig': {'defaults': {'unit': unit, 'noValue': 'Rien sur la période', 'custom': {'drawStyle': 'bars' if bars else 'line', 'lineWidth': 2, 'fillOpacity': 15,
                                                                    'stacking': {'mode': 'normal' if stack else 'none', 'group': 'A'}, 'showPoints': 'never'}}, 'overrides': []},
             'options': {'legend': {'displayMode': 'list', 'placement': 'bottom', 'showLegend': True}, 'tooltip': {'mode': 'multi', 'sort': 'desc'}}}
 
@@ -52,7 +52,7 @@ def ts(title, targets, x, y, w=12, h=8, unit='short', stack=False, desc='', bars
 def bargauge(title, expr, legend, x, y, w=12, h=8, unit='short', desc=''):
     return {'id': nid(), 'type': 'bargauge', 'title': title, 'description': desc, 'datasource': DS, 'gridPos': {'x': x, 'y': y, 'w': w, 'h': h},
             'targets': refs([target(expr, legend, instant=True)]),
-            'fieldConfig': {'defaults': {'unit': unit, 'color': {'mode': 'continuous-GrYlRd'}, 'min': 0}, 'overrides': []},
+            'fieldConfig': {'defaults': {'unit': unit, 'noValue': 'Rien sur la période', 'color': {'mode': 'continuous-GrYlRd'}, 'min': 0}, 'overrides': []},
             'options': {'displayMode': 'gradient', 'orientation': 'horizontal', 'showUnfilled': True, 'reduceOptions': {'calcs': ['lastNotNull'], 'fields': '', 'values': False}}}
 
 
@@ -86,7 +86,7 @@ tech = [
          thresholds=[{'color': 'red', 'value': None}, {'color': 'green', 'value': 1}], color_mode='background',
          desc='1 = le serveur Render répond à la collecte des mesures.'),
     stat('Requêtes / min', 'sum(rate(geocollect_http_requests_total[5m])) * 60', 4, 1, unit='short', decimals=1),
-    stat('Erreurs 5xx', '100 * sum(rate(geocollect_http_requests_total{status=~"5.."}[15m])) / clamp_min(sum(rate(geocollect_http_requests_total[15m])), 1e-9)',
+    stat('Erreurs 5xx', '100 * (sum(rate(geocollect_http_requests_total{status=~"5.."}[15m])) or vector(0)) / clamp_min(sum(rate(geocollect_http_requests_total[15m])), 1e-9)',
          8, 1, unit='percent', thresholds=RED, decimals=2, desc='Part des réponses en erreur serveur sur 15 min.'),
     stat('Latence p95 (pages et API)', f'histogram_quantile(0.95, sum by (le) (rate(geocollect_http_request_duration_seconds_bucket{{route!~"{TOOLS_RE}"}}[15m])))',
          12, 1, unit='s', decimals=2, thresholds=[{'color': 'green', 'value': None}, {'color': 'orange', 'value': 1}, {'color': 'red', 'value': 3}],

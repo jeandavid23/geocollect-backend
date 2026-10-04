@@ -55,7 +55,7 @@ groups:
           - refId: A
             relativeTimeRange: { from: 900, to: 0 }
             datasourceUid: prometheus-geocollect
-            model: { refId: A, instant: true, expr: '100 * sum(rate(geocollect_http_requests_total{status=~"5.."}[15m])) / clamp_min(sum(rate(geocollect_http_requests_total[15m])), 1e-9)' }
+            model: { refId: A, instant: true, expr: '100 * (sum(rate(geocollect_http_requests_total{status=~"5.."}[15m])) or vector(0)) / clamp_min(sum(rate(geocollect_http_requests_total[15m])), 1e-9)' }
           - refId: C
             datasourceUid: __expr__
             model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [5] } }] }
