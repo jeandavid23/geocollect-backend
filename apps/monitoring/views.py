@@ -26,20 +26,39 @@ _business = CollectorRegistry(auto_describe=False)
 _business.register(BusinessCollector())
 
 
+def _candidates(auth):
+    """Valeurs où le jeton peut se trouver selon l'outil (Bearer, Basic utilisateur ou mot de passe, jeton brut)."""
+    auth = (auth or '').strip()
+    scheme, _, rest = auth.partition(' ')
+    rest = rest.strip()
+    if scheme.lower() in ('bearer', 'token'):
+        return 'bearer', [rest]
+    if scheme.lower() == 'basic':
+        try:
+            user, _, pwd = base64.b64decode(rest).decode('utf-8', 'replace').partition(':')
+        except Exception:  # noqa: BLE001
+            return 'basic-illisible', []
+        return 'basic', [pwd.strip(), user.strip()]
+    return ('brut' if auth else 'absent'), [auth]
+
+
 def _authorized(request):
     token = (getattr(settings, 'MONITORING_TOKEN', '') or '').strip()
     if not token:
         return False
-    auth = request.META.get('HTTP_AUTHORIZATION', '')
-    if auth.startswith('Bearer '):
-        return hmac.compare_digest(auth[7:].strip(), token)
-    if auth.startswith('Basic '):
+    scheme, values = _candidates(request.META.get('HTTP_AUTHORIZATION', ''))
+    ok = any(v and hmac.compare_digest(v, token) for v in values)
+    if not ok:
+        # diagnostic sans secret : type d'authentification et longueurs seulement
         try:
-            _, _, pwd = base64.b64decode(auth[6:]).decode().partition(':')
+            from django.core.cache import caches
+            caches['shared'].set('monitoring:last_denied', {
+                'at': time.strftime('%Y-%m-%d %H:%M:%S'), 'scheme': scheme, 'lengths': [len(v) for v in values],
+                'expected_length': len(token), 'user_agent': request.META.get('HTTP_USER_AGENT', '')[:80],
+            }, 86400)
         except Exception:  # noqa: BLE001
-            return False
-        return hmac.compare_digest(pwd.strip(), token)
-    return False
+            pass
+    return ok
 
 
 @require_GET
