@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     'apps.parcels',
     'apps.dashboard',
     'apps.registry',
+    'apps.reports',
 ]
 
 MIDDLEWARE = [
@@ -155,6 +156,7 @@ REST_FRAMEWORK = {
         'user': '600/min',        # imports et analyses par lots : ~40 appels en quelques minutes
         'login': '10/min',        # tentatives de connexion par adresse IP
         'password': '5/min',
+        'message': '10/min',
     },
 }
 

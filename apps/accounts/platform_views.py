@@ -278,6 +278,7 @@ class PlatformAdminDetailView(APIView):
         for f in ('full_name', 'phone', 'is_active'):
             if f in d:
                 setattr(admin, f, d[f])
+        old_modules = admin.admin_license.modules if _has_license(admin) else None
         with transaction.atomic():
             admin.save()
             lic, _ = AdminLicense.objects.get_or_create(user=admin)
@@ -290,6 +291,24 @@ class PlatformAdminDetailView(APIView):
             _log(request, 'activate_super_admin' if d['is_active'] else 'suspend_super_admin', admin.id)
         else:
             _log(request, 'update_super_admin', admin.id)
+        changes = []
+        if 'modules' in d:
+            added = sorted(set(d['modules']) - set(old_modules or AdminLicense.MODULES))
+            removed = sorted(set(old_modules or AdminLicense.MODULES) - set(d['modules']))
+            if added:
+                changes.append('modules ajoutés : ' + ', '.join(AdminLicense.MODULES[m] for m in added))
+            if removed:
+                changes.append('modules retirés : ' + ', '.join(AdminLicense.MODULES[m] for m in removed))
+        if 'expires_at' in d:
+            changes.append(f'fin d\'abonnement : {d["expires_at"]:%d/%m/%Y}' if d['expires_at'] else 'abonnement sans fin')
+        for f, label in (('max_cooperatives', 'coopératives max.'), ('max_agents_per_coop', 'agents max. par coopérative')):
+            if f in d:
+                changes.append(f'{label} : {d[f] if d[f] is not None else "illimité"}')
+        if d.get('is_active') is True:
+            changes.insert(0, 'accès réactivé')
+        if changes:
+            from .notify import notify_users
+            notify_users([admin], ntype='info', title='Votre abonnement a été mis à jour', message=(lambda t: t[:1].upper() + t[1:])(' · '.join(changes)))
         return Response(admin_payload(admin))
 
     def delete(self, request, pk):
@@ -353,7 +372,7 @@ class PlatformModuleBulkView(APIView):
             return Response({'detail': 'Module inconnu.'}, status=status.HTTP_400_BAD_REQUEST)
         grant = request.data.get('grant', True)
         grant = grant if isinstance(grant, bool) else str(grant).lower() in ('1', 'true', 'oui')
-        changed = 0
+        changed, changed_ids = 0, []
         with transaction.atomic():
             for lic in AdminLicense.objects.select_for_update().filter(user__role='super_admin'):
                 mods = set(lic.modules or [])
@@ -362,6 +381,12 @@ class PlatformModuleBulkView(APIView):
                     lic.modules = sorted(new)
                     lic.save(update_fields=['modules'])
                     changed += 1
+                    changed_ids.append(lic.user_id)
         invalidate_tenant_cache()
         _log(request, 'grant_module_all' if grant else 'revoke_module_all', module, f'{changed} client(s)')
+        if changed and grant:
+            from .notify import notify_users
+            notify_users(changed_ids, ntype='success',
+                         title=f'Nouveau module disponible — {AdminLicense.MODULES[module]}',
+                         message='Il apparaît dans le menu de vos coopératives.')
         return Response({'module': module, 'grant': grant, 'changed': changed})

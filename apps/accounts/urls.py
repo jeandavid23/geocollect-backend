@@ -1,6 +1,7 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 from . import views
+from .messaging import MessageTargetsView, SendMessageView
 
 urlpatterns = [
     path('login/', views.LoginView.as_view(), name='login'),
@@ -14,5 +15,7 @@ urlpatterns = [
     path('users/<uuid:pk>/reset-password/', views.ResetPasswordView.as_view(), name='user_reset_password'),
     path('logs/', views.ActivityLogListView.as_view(), name='activity_logs'),
     path('notifications/', views.NotificationListView.as_view(), name='notifications'),
+    path('notifications/targets/', MessageTargetsView.as_view(), name='message_targets'),
+    path('notifications/send/', SendMessageView.as_view(), name='message_send'),
     path('notifications/read/', views.NotificationMarkReadView.as_view(), name='notifications_read'),
 ]

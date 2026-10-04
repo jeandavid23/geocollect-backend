@@ -23,3 +23,12 @@ class PasswordThrottle(SimpleRateThrottle):
 
     def get_cache_key(self, request, view):
         return self.cache_format % {'scope': self.scope, 'ident': str(request.user.pk)}
+
+
+class MessageThrottle(SimpleRateThrottle):
+    """Envoi de messages : 10 par minute et par compte."""
+    cache = caches['shared']
+    scope = 'message'
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {'scope': self.scope, 'ident': str(request.user.pk)}

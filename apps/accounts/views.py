@@ -19,15 +19,30 @@ class LoginView(TokenObtainPairView):
     throttle_classes = [LoginThrottle]   # 10 tentatives / minute par identifiant visé
 
     def post(self, request, *args, **kwargs):
-        response = super().post(request, *args, **kwargs)
+        from .notify import notify_login, notify_failed_login, client_ip, _device
+        try:
+            response = super().post(request, *args, **kwargs)
+        except Exception:
+            if isinstance(request.data, dict):
+                notify_failed_login(request.data.get('username'), request)
+            raise
         if response.status_code == 200:
             user_data = response.data.get('user', {})
+            uid = user_data.get('id')
+            prev = ActivityLog.objects.filter(user_id=uid, action='login').order_by('-timestamp').values_list(
+                'ip_address', 'details').first()
             ActivityLog.objects.create(
-                user_id=user_data.get('id'),
+                user_id=uid,
                 action='login',
                 resource='auth',
-                ip_address=request.META.get('REMOTE_ADDR'),
+                details=_device(request),
+                ip_address=client_ip(request) or None,
             )
+            user = User.objects.select_related('cooperative').filter(pk=uid).first()
+            if user:
+                notify_login(user, request, previous=(prev[0], prev[1]) if prev and prev[1] else None)
+        elif response.status_code == 401 and isinstance(request.data, dict):
+            notify_failed_login(request.data.get('username'), request)
         return response
 
 
@@ -64,6 +79,9 @@ class ChangePasswordView(APIView):
         serializer.is_valid(raise_exception=True)
         request.user.set_password(serializer.validated_data['new_password'])
         request.user.save()
+        from .notify import notify_users, client_ip
+        notify_users([request.user], ntype='success', title='Mot de passe modifié',
+                     message=f'Modification faite depuis l\'IP {client_ip(request)}. Si ce n\'est pas vous, contactez votre administrateur.')
         return Response({'detail': 'Mot de passe modifié.'})
 
 
@@ -120,6 +138,14 @@ class ToggleUserActiveView(APIView):
         user.is_active = not user.is_active
         user.save(update_fields=['is_active'])
         invalidate_tenant_cache()
+        from .notify import notify_users, coop_accounts
+        who = request.user.full_name or request.user.username
+        if user.is_active:
+            notify_users([user], ntype='success', title='Votre compte est réactivé', message=f'Par {who}.')
+        # la coopérative est prévenue quand un de ses agents est suspendu / réactivé par son super admin
+        if user.role == 'agent' and request.user.role != 'cooperative':
+            notify_users(coop_accounts(user.cooperative), ntype='info', cooperative=user.cooperative,
+                         title=f'Agent {"réactivé" if user.is_active else "suspendu"} — {user.full_name}', message=f'Par {who}.')
         return Response({'is_active': user.is_active})
 
 
@@ -146,6 +172,9 @@ class ResetPasswordView(APIView):
             user=requester, action='reset_password', resource='user',
             resource_id=str(target.id), ip_address=request.META.get('REMOTE_ADDR'),
         )
+        from .notify import notify_users
+        notify_users([target], ntype='warning', title='Votre mot de passe a été réinitialisé',
+                     message=f'Par {requester.full_name or requester.username}. Changez-le dans « Mon compte » après connexion.')
         # Renvoie aussi par email si une adresse existe
         try:
             from .emails import send_credentials_email

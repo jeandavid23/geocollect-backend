@@ -1,6 +1,5 @@
 import logging
 
-from apps.accounts.usage import log_tool_run
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -64,7 +63,6 @@ class DeforestationAnalyzeView(APIView):
             return Response({'detail': f'Lecture des données Hansen impossible pour le moment : {exc}'},
                             status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        log_tool_run(request, 'deforestation', len(features))
         return Response({
             'count': len(results),
             'standard': standard,

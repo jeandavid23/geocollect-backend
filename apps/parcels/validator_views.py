@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 from apps.accounts.permissions import IsAgentOrAbove, resolve_cooperative, module_required
 from .models import LegacyParcel, Parcel
 from apps.accounts.usage import log_tool_run
+from apps.accounts.notify import notify_tool
 from . import validator
 
 log = logging.getLogger(__name__)
@@ -96,4 +97,9 @@ class PolygonValidatorView(APIView):
                 r.setdefault('geometry', f['geometry'])
         out['summary']['source'] = source or 'fichier'
         log_tool_run(request, 'validator', len(features))
+        s = out['summary']
+        notify_tool(request, 'Polygon Validator terminé',
+                    f"{s['initial_count']} polygone(s) · {s['final_count']} conservé(s) · {s['deleted_count']} supprimé(s) · "
+                    f"{s['geometries_fixed']} corrigé(s) · {s['overlaps_detected']} superposition(s) ≤ seuil",
+                    'warning' if s['deleted_count'] else 'success')
         return Response(out)

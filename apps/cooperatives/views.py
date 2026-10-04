@@ -47,8 +47,11 @@ class CooperativeListCreateView(generics.ListCreateAPIView):
             admin = user
         if admin is not None:
             check_cooperative_quota(admin)
-        serializer.save(managed_by=admin)
+        coop = serializer.save(managed_by=admin)
         invalidate_tenant_cache()
+        from apps.accounts.notify import notify_users, owners
+        notify_users(set(owners() + ([admin.id] if admin else [])) - {user.id}, ntype='success', cooperative=coop,
+                     title=f'Nouvelle coopérative — {coop.name}', message=f'Créée par {user.full_name or user.username}.')
 
 
 class CooperativeDetailView(generics.RetrieveUpdateDestroyAPIView):
