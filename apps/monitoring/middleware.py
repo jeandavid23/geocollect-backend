@@ -2,7 +2,7 @@ import time
 
 from .metrics import HTTP_EXCEPTIONS, HTTP_LATENCY, HTTP_REQUESTS
 
-SKIP = ('/api/v1/monitoring/metrics',)
+SKIP = ('/api/v1/monitoring/metrics',)   # couvre aussi l'adresse sans barre finale
 
 
 def _route(request):

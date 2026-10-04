@@ -27,7 +27,7 @@ _business.register(BusinessCollector())
 
 
 def _authorized(request):
-    token = getattr(settings, 'MONITORING_TOKEN', '') or ''
+    token = (getattr(settings, 'MONITORING_TOKEN', '') or '').strip()
     if not token:
         return False
     auth = request.META.get('HTTP_AUTHORIZATION', '')
@@ -38,7 +38,7 @@ def _authorized(request):
             _, _, pwd = base64.b64decode(auth[6:]).decode().partition(':')
         except Exception:  # noqa: BLE001
             return False
-        return hmac.compare_digest(pwd, token)
+        return hmac.compare_digest(pwd.strip(), token)
     return False
 
 
