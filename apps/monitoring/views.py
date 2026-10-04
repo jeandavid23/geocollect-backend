@@ -47,6 +47,9 @@ def _authorized(request):
     if not token:
         return False
     scheme, values = _candidates(request.META.get('HTTP_AUTHORIZATION', ''))
+    # Grafana Cloud (Metrics Endpoint) n'envoie pas toujours l'en-tête : jeton accepté aussi dans l'adresse (?token=)
+    if request.GET.get('token'):
+        scheme, values = scheme + '+url', values + [request.GET['token'].strip()]
     ok = any(v and hmac.compare_digest(v, token) for v in values)
     if not ok:
         # diagnostic sans secret : type d'authentification et longueurs seulement
