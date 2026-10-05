@@ -70,7 +70,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max(up{job=\"geocollect-api\"})",
+          "expr": "max(up{job=~\".*geocollect-api\"})",
           "legendFormat": "",
           "instant": true,
           "range": false,

@@ -82,7 +82,7 @@ RED = [{'color': 'green', 'value': None}, {'color': 'orange', 'value': 1}, {'col
 # ─── 1. Santé technique ──────────────────────────────────────────────────────
 tech = [
     row('Disponibilité', 0),
-    stat('API en ligne', 'max(up{job="geocollect-api"})', 0, 1, unit='bool_on_off',
+    stat('API en ligne', 'max(up{job=~".*geocollect-api"})', 0, 1, unit='bool_on_off',
          thresholds=[{'color': 'red', 'value': None}, {'color': 'green', 'value': 1}], color_mode='background',
          desc='1 = le serveur Render répond à la collecte des mesures.'),
     stat('Requêtes / min', 'sum(rate(geocollect_http_requests_total[5m])) * 60', 4, 1, unit='short', decimals=1),

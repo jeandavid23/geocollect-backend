@@ -38,7 +38,7 @@ groups:
           - refId: A
             relativeTimeRange: { from: 300, to: 0 }
             datasourceUid: prometheus-geocollect
-            model: { refId: A, expr: 'max(up{job="geocollect-api"})', instant: true }
+            model: { refId: A, expr: 'max(up{job=~".*geocollect-api"})', instant: true }
           - refId: C
             datasourceUid: __expr__
             model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: lt, params: [1] } }] }
