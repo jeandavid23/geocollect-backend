@@ -72,7 +72,7 @@ def dashboard(uid, title, desc, panels, refresh='1m', time_from='now-24h'):
         'uid': uid, 'title': title, 'description': desc, 'tags': ['geocollect', 'eudr'], 'timezone': 'browser', 'schemaVersion': 39,
         'refresh': refresh, 'time': {'from': time_from, 'to': 'now'}, 'editable': True, 'graphTooltip': 1,
         'templating': {'list': [{'name': 'datasource', 'label': 'Source', 'type': 'datasource', 'query': 'prometheus', 'current': {}, 'hide': 0}]},
-        'links': [{'title': 'Site GeoCollect', 'url': 'https://sunny-pegasus-8ea076.netlify.app', 'type': 'link', 'targetBlank': True}],
+        'links': [{'title': 'Site GeoCollect', 'url': 'https://geocollect-eudr.vercel.app', 'type': 'link', 'targetBlank': True}],
         'panels': panels,
     }
 

@@ -192,11 +192,11 @@ CORS_ALLOWED_ORIGINS = config(
     default='http://localhost:5173,https://localhost:5173,http://localhost:3000',
     cast=lambda v: [s.strip() for s in v.split(',')]
 ) + [
-    'https://sunny-pegasus-8ea076.netlify.app',   # site de production Netlify (même si la variable manque)
-    'https://geocollect-eudr.vercel.app',          # site de production Vercel
+    'https://geocollect-eudr.vercel.app',          # site officiel (Vercel)
+    'https://sunny-pegasus-8ea076.netlify.app',   # ancien site Netlify, encore en ligne (plus mis à jour)
 ]
 # En développement seulement : réseau local (téléphone). En production, seules les origines
-# de CORS_ALLOWED_ORIGINS (le site Netlify) sont acceptées — plus de joker *.netlify.app.
+# de CORS_ALLOWED_ORIGINS (le site Vercel et l'ancien site Netlify) sont acceptées — plus de joker *.netlify.app.
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r'^https?://localhost:\d+$',
     r'^https?://127\.0\.0\.1:\d+$',
@@ -236,7 +236,7 @@ CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
     default='https://localhost:5173',
     cast=lambda v: [s.strip() for s in v.split(',') if s.strip()],
-) + ['https://sunny-pegasus-8ea076.netlify.app']
+) + ['https://geocollect-eudr.vercel.app', 'https://sunny-pegasus-8ea076.netlify.app']
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 X_FRAME_OPTIONS = 'DENY'
 SECURE_CONTENT_TYPE_NOSNIFF = True
@@ -268,7 +268,10 @@ else:
 
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='GeoCollect EUDR <no-reply@geocollect.ci>')
 # URL du frontend (pour le lien de connexion dans les emails)
-FRONTEND_URL = config('FRONTEND_URL', default='https://sunny-pegasus-8ea076.netlify.app')
+FRONTEND_URL = config('FRONTEND_URL', default='https://geocollect-eudr.vercel.app')
+# Adresse officielle : Vercel (Netlify n'est plus mis à jour) — même si une ancienne variable pointe encore vers Netlify
+if 'netlify.app' in FRONTEND_URL:
+    FRONTEND_URL = 'https://geocollect-eudr.vercel.app'
 
 # ─── Passwords ────────────────────────────────────────────────────────────────
 
