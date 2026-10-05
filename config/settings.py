@@ -175,6 +175,10 @@ SIMPLE_JWT = {
     'USER_ID_CLAIM': 'user_id',
 }
 
+# ─── Connexion avec Google ─────────────────────────────────────────────────
+# Identifiants client OAuth Google, séparés par des virgules : web en premier, puis Android / iOS (vide = désactivé)
+GOOGLE_CLIENT_IDS = config('GOOGLE_CLIENT_IDS', default='')
+
 # ─── Supervision (Grafana) ─────────────────────────────────────────────────
 # Jeton exigé pour lire /api/v1/monitoring/metrics/ (vide = point désactivé)
 MONITORING_TOKEN = config('MONITORING_TOKEN', default='')

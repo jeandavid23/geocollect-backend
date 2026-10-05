@@ -11,6 +11,9 @@ numpy==2.4.6
 shapely==2.1.2
 celery==5.3.6
 redis==5.0.8
+# Connexion avec Google (vérification des jetons d'identité)
+google-auth==2.35.0
+requests==2.32.3
 # Supervision (métriques Prometheus lues par Grafana)
 prometheus-client==0.21.1
 # Production
