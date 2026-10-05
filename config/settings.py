@@ -44,7 +44,7 @@ MIDDLEWARE = [
     'apps.monitoring.middleware.PrometheusMiddleware',
     'django.middleware.security.SecurityMiddleware',
     # Compresse les grosses réponses JSON (milliers de producteurs / polygones)
-    'django.middleware.gzip.GZipMiddleware',
+    'apps.monitoring.middleware.GZipExceptMetricsMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',  # static files en production
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

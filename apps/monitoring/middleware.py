@@ -35,3 +35,16 @@ class PrometheusMiddleware:
             HTTP_EXCEPTIONS.labels(_route(request), type(exception).__name__[:60]).inc()
         except Exception:  # noqa: BLE001
             pass
+
+
+from django.middleware.gzip import GZipMiddleware  # noqa: E402
+
+
+class GZipExceptMetricsMiddleware(GZipMiddleware):
+    """Compression gzip partout sauf pour les mesures : le test de Grafana Cloud demande « gzip, br »
+    mais lit la réponse sans la décompresser (« did not return a valid response »)."""
+
+    def process_response(self, request, response):
+        if request.path.startswith('/api/v1/monitoring/metrics'):
+            return response
+        return super().process_response(request, response)
