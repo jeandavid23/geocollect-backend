@@ -1,6 +1,6 @@
 """
 /api/v1/monitoring/
-  metrics/        métriques Prometheus (Grafana) — jeton MONITORING_TOKEN obligatoire (Bearer ou Basic), sinon 404
+  metrics/        métriques Prometheus (Grafana) — jeton MONITORING_TOKEN obligatoire (Bearer ou Basic), sinon 401
   health/         état du service (base de données) pour les sondes de disponibilité — public, sans donnée sensible
   client-error/   erreurs JavaScript de l'application web (comptées, rien n'est stocké)
 """
@@ -47,9 +47,6 @@ def _authorized(request):
     if not token:
         return False
     scheme, values = _candidates(request.META.get('HTTP_AUTHORIZATION', ''))
-    # Grafana Cloud (Metrics Endpoint) n'envoie pas toujours l'en-tête : jeton accepté aussi dans l'adresse (?token=)
-    if request.GET.get('token'):
-        scheme, values = scheme + '+url', values + [request.GET['token'].strip()]
     ok = any(v and hmac.compare_digest(v, token) for v in values)
     if not ok:
         # diagnostic sans secret : type d'authentification et longueurs seulement
@@ -82,8 +79,12 @@ def _trace(request, status, size, fmt):
 @require_http_methods(['GET', 'HEAD'])
 def metrics(request):
     if not _authorized(request):
-        _trace(request, 404, 0, '')
-        return HttpResponseNotFound()          # rien n'indique qu'un point de supervision existe
+        # 401 + WWW-Authenticate : Grafana Cloud vérifie d'abord que l'adresse refuse une visite sans identifiants,
+        # puis revient avec le jeton (une réponse 404, ou 200 sans jeton, fait échouer son test)
+        _trace(request, 401, 0, '')
+        resp = HttpResponse('Authentification requise.\n', status=401, content_type='text/plain; charset=utf-8')
+        resp['WWW-Authenticate'] = 'Bearer realm="geocollect-metrics", Basic realm="geocollect-metrics"'
+        return resp
     # Format demandé : OpenMetrics (Grafana Cloud, Prometheus récents) ou texte Prometheus classique
     openmetrics = 'application/openmetrics-text' in request.META.get('HTTP_ACCEPT', '')
     if openmetrics:
