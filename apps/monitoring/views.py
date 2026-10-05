@@ -14,7 +14,7 @@ from django.conf import settings
 from django.db import connection
 from django.http import HttpResponse, HttpResponseNotFound, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, CollectorRegistry, generate_latest
 
 from .collectors import BusinessCollector
@@ -64,22 +64,48 @@ def _authorized(request):
     return ok
 
 
-@require_GET
+def _trace(request, status, size, fmt):
+    """Dernières visites du point de mesures (diagnostic de Grafana Cloud) — aucun secret enregistré."""
+    try:
+        from django.core.cache import caches
+        c = caches['shared']
+        hist = (c.get('monitoring:visits') or [])[-9:]
+        hist.append({'at': time.strftime('%Y-%m-%d %H:%M:%S'), 'method': request.method, 'status': status, 'bytes': size, 'format': fmt,
+                     'ua': request.META.get('HTTP_USER_AGENT', '')[:60], 'accept': request.META.get('HTTP_ACCEPT', '')[:120],
+                     'encoding': request.META.get('HTTP_ACCEPT_ENCODING', '')[:40], 'auth_header': bool(request.META.get('HTTP_AUTHORIZATION')),
+                     'token_in_url': 'token' in request.GET})
+        c.set('monitoring:visits', hist, 86400 * 3)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@require_http_methods(['GET', 'HEAD'])
 def metrics(request):
     if not _authorized(request):
+        _trace(request, 404, 0, '')
         return HttpResponseNotFound()          # rien n'indique qu'un point de supervision existe
+    # Format demandé : OpenMetrics (Grafana Cloud, Prometheus récents) ou texte Prometheus classique
+    openmetrics = 'application/openmetrics-text' in request.META.get('HTTP_ACCEPT', '')
+    if openmetrics:
+        from prometheus_client.openmetrics.exposition import CONTENT_TYPE_LATEST as ctype, generate_latest as gen
+    else:
+        gen, ctype = generate_latest, CONTENT_TYPE_LATEST
     if os.environ.get('PROMETHEUS_MULTIPROC_DIR'):
         from prometheus_client import multiprocess
         reg = CollectorRegistry()
         multiprocess.MultiProcessCollector(reg)
-        body = generate_latest(reg)
     else:
-        body = generate_latest(REGISTRY)
+        reg = REGISTRY
+    body = gen(reg)
     try:
-        body += generate_latest(_business)
+        extra = gen(_business)
+        if openmetrics:   # un seul « # EOF », à la toute fin
+            body = body.replace(b'# EOF\n', b'')
+        body += extra
     except Exception:  # noqa: BLE001
         log.exception('Indicateurs métier')
-    return HttpResponse(body, content_type=CONTENT_TYPE_LATEST)
+    _trace(request, 200, len(body), 'openmetrics' if openmetrics else 'prometheus')
+    return HttpResponse(body, content_type=ctype)
 
 
 @require_GET
