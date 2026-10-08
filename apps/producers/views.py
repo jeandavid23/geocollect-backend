@@ -67,9 +67,21 @@ class ProducerListCreateView(generics.ListCreateAPIView):
         return [IsAgentOrAbove()]
 
     def get_queryset(self):
+        from django.db.models import IntegerField, OuterRef, Subquery, Value
+        from django.db.models.functions import Coalesce
+        from apps.parcels.models import LegacyParcel
+        legacy = (LegacyParcel.objects.filter(producer=OuterRef('pk')).order_by().values('producer')
+                  .annotate(n=Count('id')).values('n'))
         qs = (Producer.objects.select_related('cooperative', 'assigned_agent__user')
-              .annotate(parcel_count_annot=Count('parcels'), total_hectares_annot=Sum('parcels__area_hectares'))
+              .annotate(parcel_count_annot=Count('parcels'), total_hectares_annot=Sum('parcels__area_hectares'),
+                        legacy_count_annot=Coalesce(Subquery(legacy, output_field=IntegerField()), Value(0)))
               .order_by('last_name', 'first_name', 'id'))
+        # ?to_map=true : producteurs sans aucun polygone (registre sans correspondance) → à cartographier par les agents
+        tm = self.request.query_params.get('to_map')
+        if tm in ('true', '1'):
+            qs = qs.filter(parcel_count_annot=0, legacy_count_annot=0)
+        elif tm in ('false', '0'):
+            qs = qs.exclude(parcel_count_annot=0, legacy_count_annot=0)
         # Coopérative et agent : tous les producteurs de leur coopérative ; super admin : ses coopératives
         return scope_to_cooperative(qs, self.request.user)
 
@@ -172,46 +184,85 @@ class ProducerBulkImportView(APIView):
         # Un agent qui importe est rattaché d'office à ses producteurs
         agent = getattr(request.user, 'agent_profile', None) if request.user.role == 'agent' else None
 
-        valid, errors = [], []
+        # use_codes : le fichier a une colonne « code producteur » → aucune ligne sans code n'est acceptée
+        use_codes = bool(request.data.get('use_codes'))
+        valid, errors, raw_codes = [], [], []
         for i, row in enumerate(rows):
             if not isinstance(row, dict):
                 errors.append({'index': i, 'errors': {'detail': 'Ligne invalide.'}})
                 continue
+            code = str(row.get('code') or '').strip()[:50]
+            if use_codes and not code:
+                errors.append({'index': i, 'errors': {'code': 'Code producteur absent : ligne non importée.'}})
+                continue
             valid.append(self._clean(row, limits))
+            raw_codes.append(code)
 
-        created = []
+        created, updated = [], []
         if valid:
+            from .matching import normalize_code
             with transaction.atomic():
-                sections = {d.get('section', '') for d in valid}
-                codes = {s: generate_field_id_base(s, 0)[:-6] for s in sections}
-                # 1 requête : nombre de producteurs déjà enregistrés par section
-                counts = dict(
-                    Producer.objects.filter(cooperative=cooperative, section__in=sections)
-                    .values_list('section').annotate(n=Count('id')).values_list('section', 'n'))
-                # 1 requête : FIELD ID déjà pris (toutes coopératives) pour ces préfixes
-                prefix_q = Q()
-                for code in set(codes.values()):
-                    prefix_q |= Q(field_id_base__startswith=code)
-                used = set(Producer.objects.filter(prefix_q).values_list('field_id_base', flat=True))
-
-                next_index = {s: counts.get(s, 0) + 1 for s in sections}
+                # 1) Lignes avec le code du registre : ce code EST l'identifiant du producteur (jamais régénéré).
+                #    Un code déjà connu dans la coopérative met à jour le producteur au lieu d'en créer un doublon.
+                coded = [(d, raw_codes[k]) for k, d in enumerate(valid) if raw_codes[k]]
+                existing = {p.field_id_base: p for p in Producer.objects.filter(
+                    cooperative=cooperative, field_id_base__in=[c for _, c in coded])}
+                seen = set()
                 objs = []
-                for data in valid:
-                    section = data.get('section', '')
-                    base = generate_field_id_base(section, next_index[section])
-                    while base in used:
-                        next_index[section] += 1
+                for data, code in coded:
+                    if code in seen:
+                        errors.append({'index': None, 'errors': {'code': f'Code {code} en double dans le fichier : seule la 1re ligne est prise.'}})
+                        continue
+                    seen.add(code)
+                    p = existing.get(code)
+                    if p is not None:
+                        extra = {**(p.extra_data or {}), **data.pop('extra_data', {})}
+                        for k, v in data.items():
+                            setattr(p, k, v)
+                        p.extra_data = extra
+                        updated.append(p)
+                    else:
+                        objs.append(Producer(cooperative=cooperative, assigned_agent=agent, field_id_base=code,
+                                             match_key=normalize_code(code) or '', **data))
+                if updated:
+                    Producer.objects.bulk_update(updated, list({k for d, _ in coded for k in d} | {'extra_data'}), batch_size=500)
+
+                # 2) Fichier sans colonne « code » : identifiant généré comme avant (ancien comportement)
+                uncoded = [d for k, d in enumerate(valid) if not raw_codes[k]]
+                if uncoded and not use_codes:
+                    sections = {d.get('section', '') for d in uncoded}
+                    codes = {sec: generate_field_id_base(sec, 0)[:-6] for sec in sections}
+                    counts = dict(
+                        Producer.objects.filter(cooperative=cooperative, section__in=sections)
+                        .values_list('section').annotate(n=Count('id')).values_list('section', 'n'))
+                    prefix_q = Q()
+                    for code in set(codes.values()):
+                        prefix_q |= Q(field_id_base__startswith=code)
+                    used = set(Producer.objects.filter(prefix_q).values_list('field_id_base', flat=True))
+                    next_index = {sec: counts.get(sec, 0) + 1 for sec in sections}
+                    for data in uncoded:
+                        section = data.get('section', '')
                         base = generate_field_id_base(section, next_index[section])
-                    used.add(base)
-                    next_index[section] += 1
-                    objs.append(Producer(cooperative=cooperative, assigned_agent=agent, field_id_base=base, **data))
+                        while base in used:
+                            next_index[section] += 1
+                            base = generate_field_id_base(section, next_index[section])
+                        used.add(base)
+                        next_index[section] += 1
+                        objs.append(Producer(cooperative=cooperative, assigned_agent=agent, field_id_base=base,
+                                             match_key=normalize_code(base) or '', **data))
                 created = Producer.objects.bulk_create(objs, batch_size=1000)
+
+            # producteurs du registre ↔ anciens polygones (code)
+            match = None
+            if request.data.get('relink', True):
+                from .matching import relink
+                match = relink(cooperative, request.data.get('code_field') or None)
 
             try:
                 from apps.accounts.notify import notify_cooperative
                 notify_cooperative(
                     cooperative, ntype='info',
-                    title=f'Import Excel — {len(created)} producteur(s)',
+                    title=f'Import du registre — {len(created)} nouveau(x), {len(updated)} mis à jour',
                     message=f'{len(errors)} ligne(s) rejetée(s)' if errors else 'Toutes les lignes ont été enregistrées.',
                 )
             except Exception:
@@ -221,7 +272,42 @@ class ProducerBulkImportView(APIView):
         for p in created:
             p.parcel_count_annot = 0
             p.total_hectares_annot = 0
+        for p in updated:
+            p.parcel_count_annot = None
+            p.total_hectares_annot = None
         return Response({
             'created': ProducerSerializer(created, many=True).data,
+            'updated': len(updated),
             'errors': errors,
-        }, status=status.HTTP_201_CREATED if created else status.HTTP_400_BAD_REQUEST)
+            'match': match if valid else None,
+        }, status=status.HTTP_201_CREATED if (created or updated) else status.HTTP_400_BAD_REQUEST)
+
+
+class ProducerMatchView(APIView):
+    """
+    GET  /api/v1/producers/match/?cooperative=   état du croisement registre ↔ polygones + attributs disponibles
+    POST /api/v1/producers/match/  {"code_field": "<attribut des polygones>" | null}   recalcule les liens
+    """
+    permission_classes = [IsCooperativeOrAdmin]
+
+    def _coop(self, request):
+        return resolve_cooperative(request, request.data if request.method == 'POST' else None)
+
+    def get(self, request):
+        from apps.parcels.models import LegacyParcel
+        from .matching import detect_code_field, stats
+        coop = self._coop(request)
+        if coop is None:
+            return Response({'detail': 'Coopérative requise.'}, status=status.HTTP_400_BAD_REQUEST)
+        fields = set()
+        for props in LegacyParcel.objects.filter(cooperative=coop).values_list('properties', flat=True)[:500]:
+            fields.update((props or {}).keys())
+        best, score = detect_code_field(coop)
+        return Response({**stats(coop), 'fields': sorted(fields), 'suggested_field': best, 'suggested_matches': score})
+
+    def post(self, request):
+        from .matching import relink
+        coop = self._coop(request)
+        if coop is None:
+            return Response({'detail': 'Coopérative requise.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(relink(coop, request.data.get('code_field') or None))

@@ -177,6 +177,9 @@ class ProducerSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     parcel_count = serializers.SerializerMethodField()
     total_hectares = serializers.SerializerMethodField()
+    legacy_polygon_count = serializers.SerializerMethodField()
+    polygon_count = serializers.SerializerMethodField()
+    to_map = serializers.SerializerMethodField()
     cooperative_name = serializers.CharField(source='cooperative.name', read_only=True)
     assigned_agent_name = serializers.CharField(source='assigned_agent.user.full_name', read_only=True)
 
@@ -198,9 +201,20 @@ class ProducerSerializer(serializers.ModelSerializer):
             # Inspection
             'inspector_name', 'inspection_year', 'inspection_month', 'inspection_day',
             'extra_data',
-            'is_active', 'parcel_count', 'total_hectares', 'created_at',
+            'is_active', 'parcel_count', 'total_hectares', 'legacy_polygon_count', 'polygon_count', 'to_map', 'created_at',
         ]
         read_only_fields = ['id', 'field_id_base', 'created_at']
+
+    def get_legacy_polygon_count(self, obj):
+        n = getattr(obj, 'legacy_count_annot', None)
+        return n if n is not None else obj.legacy_parcels.count()
+
+    def get_polygon_count(self, obj):
+        return (self.get_parcel_count(obj) or 0) + (self.get_legacy_polygon_count(obj) or 0)
+
+    def get_to_map(self, obj):
+        """Producteur du registre sans aucun polygone (ni mappé, ni ancien) : à cartographier par les agents."""
+        return self.get_polygon_count(obj) == 0
 
 
 GMR_OPTIONAL = [

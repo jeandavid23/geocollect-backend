@@ -45,7 +45,10 @@ class Producer(models.Model):
 
     # ══ EXPLOITATION AGRICOLE (modèle GMR EUDR) ══
     # 1. Identifiant interne unique d'exploitation (ex: BEOUMI000245)
-    field_id_base = models.CharField(max_length=50, unique=True, verbose_name='Identifiant interne unique')
+    # Code du producteur TEL QU'IL FIGURE DANS LE REGISTRE de la coopérative (jamais régénéré) ; unique par coopérative
+    field_id_base = models.CharField(max_length=50, verbose_name='Code producteur (registre)')
+    # Code normalisé (majuscules, sans espaces, « 12.0 » = « 12 ») : croisement registre ↔ polygones
+    match_key = models.CharField(max_length=60, blank=True, db_index=True, editable=False)
     # 2. Identifiant national d'exploitation (obligatoire Brésil)
     national_farm_id = models.CharField(max_length=100, blank=True, verbose_name="Identifiant national d'exploitation")
     # 3. Village / Ville
@@ -107,6 +110,12 @@ class Producer(models.Model):
         verbose_name = 'Producteur'
         verbose_name_plural = 'Producteurs'
         ordering = ['last_name', 'first_name']
+        constraints = [models.UniqueConstraint(fields=['cooperative', 'field_id_base'], name='producer_code_unique_per_coop')]
+
+    def save(self, *args, **kwargs):
+        from .matching import normalize_code
+        self.match_key = normalize_code(self.field_id_base) or ''
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f'{self.last_name} {self.first_name} ({self.field_id_base})'

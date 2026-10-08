@@ -117,6 +117,18 @@ class LegacyParcelImportView(APIView):
                 uploaded_by=request.user,
             ))
 
+        # code producteur / code parcelle lu dans les attributs → rattachement au producteur du registre
+        code_field = str(request.data.get('code_field') or '').strip()
+        if code_field:
+            from apps.producers.matching import normalize_code, producer_for
+            from apps.producers.models import Producer
+            index = dict(Producer.objects.filter(cooperative=cooperative).exclude(match_key='').values_list('match_key', 'id'))
+            for o in objs:
+                raw = o.properties.get(code_field)
+                o.code = '' if raw is None else str(raw).strip()[:100]
+                o.match_key = normalize_code(o.code) or ''
+                o.producer_id = producer_for(o.match_key, index)
+
         with transaction.atomic():
             if request.data.get('replace') and source:
                 LegacyParcel.objects.filter(cooperative=cooperative, source_file=source).delete()
@@ -124,7 +136,8 @@ class LegacyParcelImportView(APIView):
 
         # une seule notification par fichier : au premier lot (replace) uniquement
         if not request.data.get('notify', True):
-            return Response({'created': len(objs), 'skipped': skipped}, status=status.HTTP_201_CREATED)
+            return Response({'created': len(objs), 'skipped': skipped, 'linked': sum(1 for o in objs if o.producer_id)},
+                        status=status.HTTP_201_CREATED)
         try:
             from apps.accounts.notify import notify_cooperative
             notify_cooperative(

@@ -85,6 +85,10 @@ class LegacyParcel(models.Model):
     properties = models.JSONField(default=dict, blank=True, verbose_name='Attributs')
     area_hectares = models.FloatField(null=True, blank=True, verbose_name='Superficie (ha)')
     source_file = models.CharField(max_length=255, blank=True, verbose_name='Fichier source')
+    # Croisement avec le registre : code lu dans les attributs du polygone et producteur correspondant
+    code = models.CharField(max_length=100, blank=True, verbose_name='Code (attributs)')
+    match_key = models.CharField(max_length=110, blank=True, db_index=True, editable=False)
+    producer = models.ForeignKey('producers.Producer', null=True, blank=True, on_delete=models.SET_NULL, related_name='legacy_parcels')
     uploaded_by = models.ForeignKey('accounts.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
 
