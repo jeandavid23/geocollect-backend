@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'apps.registry',
     'apps.reports',
     'apps.monitoring',
+    'apps.contact',
 ]
 
 MIDDLEWARE = [
@@ -160,6 +161,7 @@ REST_FRAMEWORK = {
         'login': '10/min',        # tentatives de connexion par adresse IP
         'password': '5/min',
         'message': '10/min',
+        'demo': '5/hour',          # formulaire public « Demander une démo »
     },
 }
 
@@ -181,6 +183,9 @@ GOOGLE_CLIENT_IDS = config('GOOGLE_CLIENT_IDS', default='')
 
 # ─── Supervision (Grafana) ─────────────────────────────────────────────────
 # Jeton exigé pour lire /api/v1/monitoring/metrics/ (vide = point désactivé)
+# Adresse qui reçoit aussi les demandes de démonstration par e-mail (si l'envoi d'e-mails est configuré)
+CONTACT_EMAIL = config('CONTACT_EMAIL', default='jeandavidkyao@gmail.com')
+
 MONITORING_TOKEN = config('MONITORING_TOKEN', default='')
 # Indicateurs métier recalculés au plus toutes les N secondes (la base Neon gratuite peut dormir entre deux)
 MONITORING_BUSINESS_TTL = config('MONITORING_BUSINESS_TTL', default=900, cast=int)
