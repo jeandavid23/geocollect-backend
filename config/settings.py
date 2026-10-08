@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'apps.reports',
     'apps.monitoring',
     'apps.contact',
+    'apps.lots',
 ]
 
 MIDDLEWARE = [

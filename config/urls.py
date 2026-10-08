@@ -34,6 +34,7 @@ urlpatterns = [
     path('api/v1/reports/', include('apps.reports.urls')),
     path('api/v1/monitoring/', include('apps.monitoring.urls')),
     path('api/v1/contact/', include('apps.contact.urls')),
+    path('api/v1/lots/', include('apps.lots.urls')),
     # Espace du propriétaire de la plateforme (Super Super Admin)
     path('api/v1/platform/', include('apps.accounts.platform_urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

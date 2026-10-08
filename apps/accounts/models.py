@@ -137,6 +137,7 @@ class AdminLicense(models.Model):
         'legacy': 'Anciens polygones',
         'selfintersection': 'Self-intersection (nettoyage)',
         'gmr': 'Polygon & GMR (registre × polygones)',
+        'lots': 'Fiches de lot',
     }
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='admin_license')
