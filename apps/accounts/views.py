@@ -225,3 +225,16 @@ class NotificationMarkReadView(APIView):
     def post(self, request):
         Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
         return Response({'detail': 'Notifications marquées comme lues.'})
+
+
+class NotificationDeleteView(APIView):
+    """DELETE /api/v1/auth/notifications/clear/ (toutes les miennes) ou /clear/?id=<uuid> (une seule)."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request):
+        qs = Notification.objects.filter(recipient=request.user)
+        if request.query_params.get('id'):
+            qs = qs.filter(id=request.query_params['id'])
+        n = qs.count()
+        qs.delete()
+        return Response({'deleted': n})

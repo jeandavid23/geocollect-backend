@@ -53,6 +53,16 @@ class AgentDetailView(generics.RetrieveUpdateDestroyAPIView):
             serializer.validated_data.pop('cooperative', None)
         serializer.save()
 
+    def perform_destroy(self, instance):
+        # le compte de connexion de l'agent est supprimé avec lui ; ses parcelles mappées sont conservées
+        from apps.accounts.models import ActivityLog
+        user = instance.user
+        ActivityLog.objects.create(user=self.request.user, action='delete_agent', resource='agent', resource_id=str(instance.id),
+                                   details=f'{user.full_name if user else ""} ({instance.code})', ip_address=self.request.META.get('REMOTE_ADDR'))
+        instance.delete()
+        if user is not None and user.role == 'agent':
+            user.delete()
+
 
 class ProducerListCreateView(generics.ListCreateAPIView):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -101,6 +111,21 @@ class ProducerDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_serializer_class(self):
         return ProducerCreateSerializer if self.request.method in ('PUT', 'PATCH') else ProducerSerializer
+
+    def perform_update(self, serializer):
+        old = serializer.instance.field_id_base
+        p = serializer.save()
+        if p.field_id_base != old:          # code corrigé : les polygones sont recroisés
+            from .matching import relink
+            relink(p.cooperative)
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import ValidationError
+        if instance.parcels.exists():
+            raise ValidationError({'detail': 'Ce producteur a des parcelles mappées : supprimez-les d\'abord (Parcelles).'})
+        if instance.lot_lines.exists():
+            raise ValidationError({'detail': 'Ce producteur figure dans une fiche de lot : il ne peut pas être supprimé.'})
+        instance.delete()
 
 
 class ProducerBulkImportView(APIView):
@@ -311,3 +336,33 @@ class ProducerMatchView(APIView):
         if coop is None:
             return Response({'detail': 'Coopérative requise.'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(relink(coop, request.data.get('code_field') or None))
+
+
+class ProducerBulkDeleteView(APIView):
+    """
+    POST /api/v1/producers/bulk-delete/ {"ids": [...]}
+    Supprime des producteurs de la coopérative. Protégés (non supprimés) : ceux qui ont des parcelles mappées
+    par les agents (elles seraient supprimées avec eux) ou qui figurent dans une fiche de lot.
+    Leurs anciens polygones ne sont pas supprimés : ils redeviennent « sans producteur ».
+    """
+    permission_classes = [IsCooperativeOrAdmin]
+
+    def post(self, request):
+        ids = request.data.get('ids') or []
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Aucun producteur sélectionné.'}, status=status.HTTP_400_BAD_REQUEST)
+        if len(ids) > 20000:
+            return Response({'detail': 'Maximum 20 000 producteurs par suppression.'}, status=status.HTTP_400_BAD_REQUEST)
+        qs = scope_to_cooperative(Producer.objects.filter(id__in=ids), request.user)
+        protected = qs.filter(Q(parcels__isnull=False) | Q(lot_lines__isnull=False)).distinct()
+        kept = list(protected.values_list('field_id_base', flat=True)[:50])
+        n_kept = protected.count()
+        deletable = qs.exclude(id__in=protected.values('id'))
+        coops = set(deletable.values_list('cooperative_id', flat=True))
+        deleted = deletable.count()
+        with transaction.atomic():
+            deletable.delete()
+        from apps.accounts.models import ActivityLog
+        ActivityLog.objects.create(user=request.user, action='delete_producers', resource='producer',
+                                   details=f'{deleted} supprimé(s), {n_kept} protégé(s)', ip_address=request.META.get('REMOTE_ADDR'))
+        return Response({'deleted': deleted, 'protected': n_kept, 'protected_codes': kept, 'cooperatives': [str(c) for c in coops]})

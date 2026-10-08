@@ -132,3 +132,20 @@ class SyncParcelsView(APIView):
             'created_ids': created,
             'error_details': errors,
         }, status=status.HTTP_207_MULTI_STATUS)
+
+
+class ParcelBulkDeleteView(APIView):
+    """POST /api/v1/parcels/bulk-delete/ {"ids": [...]} — parcelles mappées de la (des) coopérative(s) accessible(s)."""
+    permission_classes = [IsCooperativeOrAdmin]
+
+    def post(self, request):
+        ids = request.data.get('ids') or []
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Aucune parcelle sélectionnée.'}, status=status.HTTP_400_BAD_REQUEST)
+        qs = scope_to_cooperative(Parcel.objects.filter(id__in=ids[:20000]), request.user)
+        n = qs.count()
+        qs.delete()
+        from apps.accounts.models import ActivityLog
+        ActivityLog.objects.create(user=request.user, action='delete_parcels', resource='parcel', details=f'{n} parcelle(s)',
+                                   ip_address=request.META.get('REMOTE_ADDR'))
+        return Response({'deleted': n})

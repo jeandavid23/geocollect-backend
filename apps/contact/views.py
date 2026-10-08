@@ -87,3 +87,7 @@ class DemoDetailView(APIView):
         d.status = st
         d.save(update_fields=['status'])
         return Response(DemoSerializer(d).data)
+
+    def delete(self, request, pk):
+        n = DemoRequest.objects.filter(pk=pk).delete()[0]
+        return Response(status=status.HTTP_204_NO_CONTENT if n else status.HTTP_404_NOT_FOUND)

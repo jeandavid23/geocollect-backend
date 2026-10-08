@@ -244,10 +244,12 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
             'inspector_name', 'inspection_year', 'inspection_month', 'inspection_day',
             'extra_data',
         ]
-        read_only_fields = ['id', 'field_id_base']
+        read_only_fields = ['id']
         extra_kwargs = {
             'cooperative': {'required': False},
             'assigned_agent': {'required': False},
+            # code du registre : corrigeable (unicité vérifiée dans la coopérative), jamais vide
+            'field_id_base': {'required': False},
             **{f: {'required': False, 'allow_blank': True} for f in
                ['first_name', 'last_name', 'section',
                 'national_farm_id', 'district', 'region', 'country', 'village',
@@ -258,6 +260,15 @@ class ProducerCreateSerializer(serializers.ModelSerializer):
                 'permanent_workers', 'temporary_workers', 'farm_type',
                 'inspection_year', 'inspection_month', 'inspection_day']},
         }
+
+    def validate_field_id_base(self, v):
+        v = (v or '').strip()
+        if not v:
+            raise serializers.ValidationError('Le code producteur ne peut pas être vide.')
+        coop_id = getattr(self.instance, 'cooperative_id', None)
+        if coop_id and Producer.objects.filter(cooperative_id=coop_id, field_id_base=v).exclude(pk=self.instance.pk).exists():
+            raise serializers.ValidationError(f'Le code {v} est déjà utilisé par un autre producteur de la coopérative.')
+        return v[:50]
 
     def validate(self, attrs):
         request = self.context.get('request')
