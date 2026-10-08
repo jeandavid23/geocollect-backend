@@ -11,7 +11,8 @@ import re
 
 from django.db import transaction
 
-SEPARATORS = re.compile(r'^(.+?)[-_/.\s]+[A-Z]{0,3}\d{1,3}$')
+# suffixe de parcelle : « -P2 », « _2 », « /2 », « .2 », ou « P2 » collé (122-NV-331P1)
+SEPARATORS = re.compile(r'^(.+?)(?:[-_/.\s]+[A-Z]{0,3}\d{1,3}|P\d{1,3})$')
 PRODUCER_CODE_KEYS = ['code producteur', 'code_producteur', 'code planteur', 'codeproducteur', 'code parcelle', 'code_parcelle',
                       'field_id', 'fieldid', 'field id', 'code', 'id producteur', 'matricule', 'producer_code']
 

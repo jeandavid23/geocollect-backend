@@ -366,3 +366,87 @@ class ProducerBulkDeleteView(APIView):
         ActivityLog.objects.create(user=request.user, action='delete_producers', resource='producer',
                                    details=f'{deleted} supprimé(s), {n_kept} protégé(s)', ip_address=request.META.get('REMOTE_ADDR'))
         return Response({'deleted': deleted, 'protected': n_kept, 'protected_codes': kept, 'cooperatives': [str(c) for c in coops]})
+
+
+class ProducerRecodeView(APIView):
+    """
+    Recodage des producteurs existants avec le code de leur registre (colonne conservée dans extra_data).
+    GET  /api/v1/producers/recode/?cooperative=     colonnes candidates, colonne suggérée, aperçu
+    POST /api/v1/producers/recode/ {"column": "...", "apply": true}   applique (sinon simulation) puis recroise les polygones
+    """
+    permission_classes = [IsCooperativeOrAdmin]
+    HINTS = ('identifiant interne unique', 'code producteur', 'code planteur', 'code du producteur', 'matricule', 'id producteur')
+
+    @staticmethod
+    def _value(v):
+        if v is None:
+            return ''
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)
+        return str(v).strip()[:50]
+
+    def _plan(self, coop, column):
+        producers = list(Producer.objects.filter(cooperative=coop).only('id', 'field_id_base', 'extra_data'))
+        new_codes, seen, dup, missing = {}, set(), [], 0
+        for p in producers:
+            code = self._value((p.extra_data or {}).get(column))
+            if not code:
+                missing += 1
+                continue
+            if code in seen:
+                dup.append(code)
+                continue
+            seen.add(code)
+            new_codes[p.id] = code
+        # codes déjà pris par des producteurs qui ne sont pas recodés
+        kept = {p.field_id_base for p in producers if p.id not in new_codes}
+        conflicts = [c for c in new_codes.values() if c in kept]
+        for pid in [k for k, c in new_codes.items() if c in kept]:
+            new_codes.pop(pid)
+        changes = sum(1 for p in producers if p.id in new_codes and new_codes[p.id] != p.field_id_base)
+        return producers, new_codes, {'producers': len(producers), 'recoded': changes, 'unchanged': len(new_codes) - changes,
+                                      'without_code': missing, 'duplicates': len(dup), 'duplicate_codes': dup[:20],
+                                      'conflicts': len(conflicts), 'sample': [{'avant': p.field_id_base, 'apres': new_codes[p.id]} for p in producers if p.id in new_codes][:8]}
+
+    def get(self, request):
+        coop = resolve_cooperative(request)
+        if coop is None:
+            return Response({'detail': 'Coopérative requise.'}, status=status.HTTP_400_BAD_REQUEST)
+        counts = {}
+        for extra in Producer.objects.filter(cooperative=coop).values_list('extra_data', flat=True)[:3000]:
+            for k, v in (extra or {}).items():
+                if v not in (None, ''):
+                    counts[k] = counts.get(k, 0) + 1
+        from apps.producers.matching import normalize_code
+        def score(k):
+            n = k.lower()
+            return (any(h in n for h in self.HINTS), counts[k])
+        suggested = max(counts, key=score) if counts and any(any(h in k.lower() for h in self.HINTS) for k in counts) else None
+        return Response({'columns': [{'name': k, 'filled': n} for k, n in sorted(counts.items(), key=lambda x: -x[1])],
+                         'suggested': suggested,
+                         'preview': self._plan(coop, suggested)[2] if suggested else None})
+
+    def post(self, request):
+        coop = resolve_cooperative(request, request.data)
+        column = request.data.get('column')
+        if coop is None or not column:
+            return Response({'detail': 'Coopérative et colonne requises.'}, status=status.HTTP_400_BAD_REQUEST)
+        producers, new_codes, report = self._plan(coop, column)
+        if not request.data.get('apply'):
+            return Response({**report, 'applied': False})
+        from .matching import normalize_code, relink
+        changed = []
+        for p in producers:
+            c = new_codes.get(p.id)
+            if c and c != p.field_id_base:
+                p.field_id_base, p.match_key = c, normalize_code(c) or ''
+                changed.append(p)
+        with transaction.atomic():
+            # en deux temps : évite une collision passagère sur la contrainte d'unicité (échange de codes)
+            for p in changed:
+                Producer.objects.filter(pk=p.pk).update(field_id_base=f'__tmp__{p.pk.hex[:20]}')
+            Producer.objects.bulk_update(changed, ['field_id_base', 'match_key'], batch_size=500)
+        from apps.accounts.models import ActivityLog
+        ActivityLog.objects.create(user=request.user, action='recode_producers', resource='producer',
+                                   details=f'{len(changed)} recodé(s) depuis « {column} »', ip_address=request.META.get('REMOTE_ADDR'))
+        return Response({**report, 'applied': True, 'match': relink(coop)})
