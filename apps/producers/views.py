@@ -450,3 +450,56 @@ class ProducerRecodeView(APIView):
         ActivityLog.objects.create(user=request.user, action='recode_producers', resource='producer',
                                    details=f'{len(changed)} recodé(s) depuis « {column} »', ip_address=request.META.get('REMOTE_ADDR'))
         return Response({**report, 'applied': True, 'match': relink(coop)})
+
+
+class BasePurgeView(APIView):
+    """
+    Supprimer la base d'une coopérative (registre et/ou producteurs).
+    GET  /api/v1/producers/purge/?cooperative=   ce qui serait supprimé
+    POST /api/v1/producers/purge/ {"registry": bool, "producers": bool, "confirm": "SUPPRIMER"}
+    Les producteurs qui ont des parcelles mappées ou qui figurent dans une fiche de lot sont conservés.
+    Les anciens polygones ne sont pas supprimés : ils redeviennent « sans producteur ».
+    """
+    permission_classes = [IsCooperativeOrAdmin]
+
+    @staticmethod
+    def _counts(coop):
+        from apps.registry.models import RegistrySheet
+        producers = Producer.objects.filter(cooperative=coop)
+        protected = producers.filter(Q(parcels__isnull=False) | Q(lot_lines__isnull=False)).distinct()
+        return producers, protected, RegistrySheet.objects.filter(cooperative=coop)
+
+    def get(self, request):
+        coop = resolve_cooperative(request)
+        if coop is None:
+            return Response({'detail': 'Coopérative requise.'}, status=status.HTTP_400_BAD_REQUEST)
+        producers, protected, sheets = self._counts(coop)
+        n_prot = protected.count()
+        return Response({'cooperative': coop.name, 'producers': producers.count(), 'protected': n_prot, 'registry_sheets': sheets.count()})
+
+    def post(self, request):
+        coop = resolve_cooperative(request, request.data)
+        if coop is None:
+            return Response({'detail': 'Coopérative requise.'}, status=status.HTTP_400_BAD_REQUEST)
+        if str(request.data.get('confirm', '')).strip().upper() != 'SUPPRIMER':
+            return Response({'detail': 'Confirmation manquante : saisissez SUPPRIMER.'}, status=status.HTTP_400_BAD_REQUEST)
+        do_reg, do_prod = bool(request.data.get('registry')), bool(request.data.get('producers'))
+        if not (do_reg or do_prod):
+            return Response({'detail': 'Rien à supprimer.'}, status=status.HTTP_400_BAD_REQUEST)
+        producers, protected, sheets = self._counts(coop)
+        out = {'registry_sheets': 0, 'deleted': 0, 'protected': 0, 'protected_codes': []}
+        with transaction.atomic():
+            if do_reg:
+                out['registry_sheets'] = sheets.count()
+                sheets.delete()
+            if do_prod:
+                out['protected'] = protected.count()
+                out['protected_codes'] = list(protected.values_list('field_id_base', flat=True)[:50])
+                deletable = producers.exclude(id__in=protected.values('id'))
+                out['deleted'] = deletable.count()
+                deletable.delete()
+        from apps.accounts.models import ActivityLog
+        ActivityLog.objects.create(user=request.user, action='purge_base', resource='cooperative', resource_id=str(coop.id),
+                                   details=f'{coop.name} : registre {out["registry_sheets"]} feuille(s), producteurs {out["deleted"]} supprimé(s), {out["protected"]} conservé(s)',
+                                   ip_address=request.META.get('REMOTE_ADDR'))
+        return Response(out)
