@@ -31,9 +31,11 @@ class ParcelCreateSerializer(serializers.ModelSerializer):
             'producer', 'cooperative', 'agent', 'name',
             'geometry', 'area_hectares', 'perimeter_meters', 'vertex_count',
             'culture', 'village', 'section', 'region', 'country',
-            'mapping_started_at', 'mapping_ended_at', 'is_synced',
+            'mapping_started_at', 'mapping_ended_at', 'is_synced', 'client_id',
         ]
         extra_kwargs = {
+            # unicité vérifiée dans create() (renvoi idempotent), pas comme une erreur de validation
+            'client_id': {'required': False, 'validators': []},
             'cooperative': {'required': False},
             'agent': {'required': False},
             'region': {'required': False, 'allow_blank': True},
@@ -84,6 +86,15 @@ class ParcelCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         from utils.field_id import generate_parcel_field_id, get_next_parcel_index
+        # Renvoi d'une parcelle déjà reçue (réseau coupé avant la réponse) : on renvoie la parcelle existante
+        cid = validated_data.get('client_id')
+        if cid:
+            existing = Parcel.objects.filter(client_id=cid).first()
+            if existing is not None:
+                if existing.cooperative_id != validated_data.get('cooperative', existing.cooperative).id:
+                    raise serializers.ValidationError({'client_id': 'Identifiant déjà utilisé.'})
+                self.instance_was_existing = True
+                return existing
         producer = validated_data['producer']
         index = get_next_parcel_index(producer.id)
         field_id = generate_parcel_field_id(producer.field_id_base, index)

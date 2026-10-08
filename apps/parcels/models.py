@@ -43,6 +43,8 @@ class Parcel(models.Model):
     mapping_ended_at = models.DateTimeField(null=True, blank=True)
     # Sync
     is_synced = models.BooleanField(default=True)
+    # Identifiant créé par le téléphone (mode hors ligne) : un même envoi répété ne crée jamais de doublon
+    client_id = models.CharField(max_length=64, null=True, blank=True, unique=True, verbose_name='Identifiant hors ligne')
     synced_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
