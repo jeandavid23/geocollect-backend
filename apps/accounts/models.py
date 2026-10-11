@@ -48,6 +48,14 @@ class User(AbstractBaseUser, PermissionsMixin):
         related_name='users',
     )
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
+    # Mot de passe provisoire (créé ou réinitialisé par un administrateur) : à changer à la 1re connexion
+    must_change_password = models.BooleanField(default=False)
+    # Double authentification (TOTP, code à 6 chiffres) — obligatoire pour le propriétaire et les super admins
+    totp_secret = models.CharField(max_length=64, blank=True)
+    totp_enabled = models.BooleanField(default=False)
+    totp_recovery = models.JSONField(default=list, blank=True)       # empreintes des codes de secours
+    # Préférences de notification : {"<type>": {"email": bool}} ; vide = réglages par défaut
+    notification_prefs = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -116,6 +116,7 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             role=User.Role.AGENT, cooperative=cooperative,
         )
         user.set_password(password)
+        user.must_change_password = True   # mot de passe provisoire
         user.save()
 
         # code agent est unique : garantit l'unicité (évite la collision entre coops)

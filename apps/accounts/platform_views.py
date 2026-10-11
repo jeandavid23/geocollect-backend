@@ -232,6 +232,7 @@ class PlatformAdminListView(APIView):
                          # jamais d'accès à l'administration Django : elle contournerait le cloisonnement
                          is_staff=False, is_superuser=False)
             admin.set_password(password)
+            admin.must_change_password = True   # mot de passe provisoire
             admin.save()
             AdminLicense.objects.create(user=admin, **{k: d[k] for k in LICENSE_FIELDS if k in d})
         _log(request, 'create_super_admin', admin.id, d.get('organization', ''))

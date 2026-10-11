@@ -32,3 +32,13 @@ class MessageThrottle(SimpleRateThrottle):
 
     def get_cache_key(self, request, view):
         return self.cache_format % {'scope': self.scope, 'ident': str(request.user.pk)}
+
+
+class MfaThrottle(SimpleRateThrottle):
+    """Code à 6 chiffres : 10 essais / minute par session de connexion (le jeton exige déjà le mot de passe)."""
+    cache = caches['shared']
+    scope = 'login'
+
+    def get_cache_key(self, request, view):
+        token = str(request.data.get('mfa_token', '')) if hasattr(request, 'data') else ''
+        return self.cache_format % {'scope': 'mfa', 'ident': token.split(':')[0][:60] or self.get_ident(request)}

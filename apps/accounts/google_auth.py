@@ -91,6 +91,9 @@ class GoogleLoginView(APIView):
         if not st['active']:
             return Response({'detail': st['reason'], 'code': 'tenant_inactive'}, status=status.HTTP_401_UNAUTHORIZED)
 
+        if user.totp_enabled:
+            from .session import mfa_challenge
+            return Response(mfa_challenge(user))
         refresh = RefreshToken.for_user(user)
         safe_inc(LOGINS, result='succes')
         prev = ActivityLog.objects.filter(user=user, action='login').order_by('-timestamp').values_list('ip_address', 'details').first()

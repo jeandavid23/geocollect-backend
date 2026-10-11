@@ -1,4 +1,5 @@
-from rest_framework.exceptions import AuthenticationFailed
+from django.conf import settings
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from .tenancy import tenant_status
@@ -18,4 +19,16 @@ class TenantJWTAuthentication(JWTAuthentication):
         status = tenant_status(user)
         if not status['active']:
             raise AuthenticationFailed({'detail': status['reason'], 'code': 'tenant_inactive'})
+        path = request.path
+        if not any(path.startswith(p) for p in GATE_OPEN):
+            if user.must_change_password:
+                raise PermissionDenied({'detail': 'Mot de passe provisoire : choisissez votre mot de passe pour continuer.',
+                                        'code': 'password_change_required'})
+            if user.role in ('owner', 'super_admin') and not user.totp_enabled and getattr(settings, 'MFA_ENFORCED', True):
+                raise PermissionDenied({'detail': 'Activez la double authentification pour continuer.', 'code': 'mfa_setup_required'})
         return user, token
+
+
+# accessibles même avant le changement de mot de passe / l'activation de la double authentification
+GATE_OPEN = ('/api/v1/auth/me/', '/api/v1/auth/change-password/', '/api/v1/auth/logout/', '/api/v1/auth/mfa/',
+             '/api/v1/monitoring/')

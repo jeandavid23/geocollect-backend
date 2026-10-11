@@ -15,6 +15,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not status['active']:
             # Organisation suspendue, abonnement expiré ou coopérative désactivée : connexion refusée
             raise AuthenticationFailed({'detail': status['reason'], 'code': 'tenant_inactive'})
+        if user.totp_enabled:
+            from .session import mfa_challenge
+            return mfa_challenge(user)          # pas de jeton avant le code à 6 chiffres
         data['user'] = MeSerializer(user).data
         return data
 
@@ -64,6 +67,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
         password = validated_data.pop('password')
         user = User(**validated_data)
         user.set_password(password)
+        user.must_change_password = True   # mot de passe provisoire
         user.save()
         return user
 
@@ -105,9 +109,17 @@ class MeSerializer(UserSerializer):
     """Profil de l'utilisateur connecté + droits de son organisation (modules, licence)."""
     modules = serializers.SerializerMethodField()
     license = serializers.SerializerMethodField()
+    must_change_password = serializers.BooleanField(read_only=True)
+    mfa_enabled = serializers.BooleanField(source='totp_enabled', read_only=True)
+    mfa_required = serializers.SerializerMethodField()   # rôle pour lequel la double authentification est obligatoire
+
+    def get_mfa_required(self, obj):
+        from .mfa import MFA_ROLES
+        from django.conf import settings
+        return obj.role in MFA_ROLES and getattr(settings, 'MFA_ENFORCED', True)
 
     class Meta(UserSerializer.Meta):
-        fields = UserSerializer.Meta.fields + ['modules', 'license']
+        fields = UserSerializer.Meta.fields + ['modules', 'license', 'must_change_password', 'mfa_enabled', 'mfa_required']
 
     def get_modules(self, obj):
         from .tenancy import tenant_status

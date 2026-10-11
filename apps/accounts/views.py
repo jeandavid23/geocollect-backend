@@ -29,6 +29,8 @@ class LoginView(TokenObtainPairView):
                 notify_failed_login(request.data.get('username'), request)
             raise
         safe_inc(LOGINS, result='succes' if response.status_code == 200 else 'echec')
+        if response.status_code == 200 and response.data.get('mfa_required'):
+            return response                     # connexion terminée (et journalisée) après le code à 6 chiffres
         if response.status_code == 200:
             user_data = response.data.get('user', {})
             uid = user_data.get('id')
@@ -81,6 +83,7 @@ class ChangePasswordView(APIView):
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         request.user.set_password(serializer.validated_data['new_password'])
+        request.user.must_change_password = False
         request.user.save()
         from .notify import notify_users, client_ip
         notify_users([request.user], ntype='success', title='Mot de passe modifié',
@@ -234,6 +237,7 @@ class ResetPasswordView(APIView):
 
         new_password = generate_password()
         target.set_password(new_password)
+        target.must_change_password = True   # mot de passe provisoire : à changer à la prochaine connexion
         target.save()
         ActivityLog.objects.create(
             user=requester, action='reset_password', resource='user',

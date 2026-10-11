@@ -72,6 +72,7 @@ class CooperativeCreateSerializer(serializers.ModelSerializer):
             cooperative=coop,
         )
         user.set_password(password)
+        user.must_change_password = True   # mot de passe provisoire
         user.save()
 
         # Email de confirmation avec les accès
