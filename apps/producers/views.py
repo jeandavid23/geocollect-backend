@@ -54,14 +54,17 @@ class AgentDetailView(generics.RetrieveUpdateDestroyAPIView):
         serializer.save()
 
     def perform_destroy(self, instance):
-        # le compte de connexion de l'agent est supprimé avec lui ; ses parcelles mappées sont conservées
+        # l'agent est supprimé avec son compte et TOUTES ses données (parcelles mappées, polygones importés, rapports)
         from apps.accounts.models import ActivityLog
+        from apps.accounts.purge import purge
         user = instance.user
+        label = f'{user.full_name if user else ""} ({instance.code})'
+        done = purge(user) if user is not None and user.role == 'agent' else None
+        if done is None:
+            instance.delete()
         ActivityLog.objects.create(user=self.request.user, action='delete_agent', resource='agent', resource_id=str(instance.id),
-                                   details=f'{user.full_name if user else ""} ({instance.code})', ip_address=self.request.META.get('REMOTE_ADDR'))
-        instance.delete()
-        if user is not None and user.role == 'agent':
-            user.delete()
+                                   details=f'{label} et ses données' + (f' : {done["parcels"]} parcelle(s)' if done and done['parcels'] else ''),
+                                   ip_address=self.request.META.get('REMOTE_ADDR'))
 
 
 class ProducerListCreateView(generics.ListCreateAPIView):

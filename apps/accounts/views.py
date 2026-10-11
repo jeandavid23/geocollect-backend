@@ -129,9 +129,8 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 def delete_account(request, instance):
     """
-    Suppression d'un compte. Le propriétaire supprime n'importe quel compte, sans condition, sauf le sien et le
-    dernier compte propriétaire. Les données métier restent : coopératives d'un super admin (gérées ensuite
-    directement par le propriétaire), parcelles d'un agent (sans agent), rapports et journaux (sans auteur).
+    Suppression d'un compte ET de toutes ses données (voir apps/accounts/purge.py). Le propriétaire supprime
+    n'importe quel compte, sauf le sien et le dernier compte propriétaire.
     """
     from rest_framework.exceptions import PermissionDenied
     from .tenancy import invalidate_tenant_cache
@@ -142,14 +141,39 @@ def delete_account(request, instance):
             raise PermissionDenied('Seul le propriétaire peut supprimer un compte propriétaire.')
         if User.objects.filter(role='owner', is_active=True).exclude(pk=instance.pk).count() == 0:
             raise PermissionDenied('Impossible de supprimer le dernier compte propriétaire actif.')
+    from .purge import purge
     label = f'{instance.full_name or instance.username} ({instance.get_role_display()})'
-    coops = list(instance.managed_cooperatives.values_list('name', flat=True)) if hasattr(instance, 'managed_cooperatives') else []
-    instance.delete()
+    done = purge(instance)
     invalidate_tenant_cache()
+    parts = [f'{v} {k}' for k, v in done.items() if k not in ('user', 'role', 'cooperative_names', 'accounts') and isinstance(v, int) and v]
     ActivityLog.objects.create(user=request.user, action='delete_user', resource='user',
-                               details=label + (f' — coopératives conservées : {", ".join(coops)}' if coops else ''),
+                               details=f'{label} et toutes ses données' + (f' : {", ".join(parts)}' if parts else '')
+                               + (f' — coopérative(s) supprimée(s) : {", ".join(done["cooperative_names"])}' if done['cooperative_names'] else ''),
                                ip_address=request.META.get('REMOTE_ADDR'))
-    return coops
+    return done
+
+
+class UserDeletePreviewView(APIView):
+    """
+    POST /api/v1/auth/users/delete-preview/ {"ids": [...]} : ce qui sera supprimé avec ces comptes (avant confirmation).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from .purge import KEYS, plan
+        ids = request.data.get('ids') or []
+        users = [u for u in scope_users(User.objects.filter(pk__in=ids), request.user) if can_manage_user(request.user, u)] \
+            if request.user.role in ('owner', 'super_admin') else []
+        if request.user.role == 'cooperative':
+            users = [u for u in User.objects.filter(pk__in=ids, role='agent', cooperative_id=request.user.cooperative_id)]
+        total = {k: 0 for k in KEYS}
+        names = []
+        for u in users:
+            p = plan(u)
+            for k in KEYS:
+                total[k] += p[k]
+            names += p['cooperative_names']
+        return Response({**total, 'cooperative_names': names})
 
 
 class UserBulkDeleteView(APIView):

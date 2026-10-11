@@ -68,11 +68,17 @@ class OwnerDeleteTests(TestCase):
         self.c = APIClient()
         self.c.force_authenticate(self.owner)
 
-    def test_super_admin_avec_cooperatives(self):
+    def test_super_admin_supprime_avec_ses_cooperatives(self):
+        from apps.accounts.models import User
+        Producer.objects.create(cooperative=self.coop, field_id_base='X1', last_name='K')
+        User.objects.create_user(username='coopacc', password='x-123456789', role='cooperative', cooperative=self.coop)
+        r = self.c.post('/api/v1/auth/users/delete-preview/', {'ids': [str(self.sa.id)]}, format='json', HTTP_HOST='localhost')
+        self.assertEqual((r.json()['cooperatives'], r.json()['producers'], r.json()['accounts']), (1, 1, 2))
         r = self.c.delete(f'/api/v1/auth/users/{self.sa.id}/', HTTP_HOST='localhost')
         self.assertEqual(r.status_code, 204, r.content)
-        self.coop.refresh_from_db()
-        self.assertIsNone(self.coop.managed_by)   # coopérative conservée
+        self.assertFalse(Cooperative.objects.filter(pk=self.coop.pk).exists())
+        self.assertFalse(Producer.objects.filter(field_id_base='X1').exists())
+        self.assertFalse(User.objects.filter(username__in=['sa', 'coopacc']).exists())
 
     def test_autre_proprietaire_mais_pas_soi_meme(self):
         r = self.c.post('/api/v1/auth/users/bulk-delete/', {'ids': [str(self.owner2.id), str(self.owner.id)]}, format='json', HTTP_HOST='localhost')
@@ -83,3 +89,47 @@ class OwnerDeleteTests(TestCase):
         self.c.force_authenticate(self.sa)
         r = self.c.delete(f'/api/v1/auth/users/{self.owner2.id}/', HTTP_HOST='localhost')
         self.assertIn(r.status_code, (403, 404))
+
+
+class PurgeTests(TestCase):
+    """Un compte supprimé ne laisse aucune donnée en base."""
+
+    def setUp(self):
+        import datetime
+        from apps.accounts.models import ActivityLog, User
+        from apps.lots.models import Lot, LotLine
+        from apps.parcels.models import Parcel
+        from apps.producers.models import Agent
+        self.coop = Cooperative.objects.create(name='C', rccm='RC')
+        self.keep = Cooperative.objects.create(name='K', rccm='RK')
+        self.coop_user = User.objects.create_user(username='c', password='x-123456789', role='cooperative', cooperative=self.coop)
+        self.agent_user = User.objects.create_user(username='a', password='x-123456789', role='agent', cooperative=self.coop)
+        self.agent = Agent.objects.create(user=self.agent_user, cooperative=self.coop, code='AG1')
+        p = Producer.objects.create(cooperative=self.coop, field_id_base='P1', last_name='K')
+        self.parcel = Parcel.objects.create(producer=p, cooperative=self.coop, agent=self.agent, field_id='P1', geometry=SQ, village='V', area_hectares=1)
+        Parcel.objects.create(producer=p, cooperative=self.coop, field_id='P1-M002', geometry=SQ, village='V', area_hectares=1)
+        lot = Lot.objects.create(cooperative=self.coop, code='LOT-1', campaign='2026', lot_date=datetime.date(2026, 10, 1))
+        LotLine.objects.create(lot=lot, producer=p, weight_kg=100)
+        ActivityLog.objects.create(user=self.agent_user, action='x', resource='y')
+        Producer.objects.create(cooperative=self.keep, field_id_base='K1', last_name='Z')
+
+    def test_agent_avec_ses_parcelles(self):
+        from apps.accounts.purge import purge
+        from apps.accounts.models import ActivityLog, User
+        from apps.parcels.models import Parcel
+        done = purge(self.agent_user)
+        self.assertEqual(done['parcels'], 1)
+        self.assertEqual(list(Parcel.objects.values_list('field_id', flat=True)), ['P1-M002'])   # parcelle d'un autre auteur gardée
+        self.assertFalse(User.objects.filter(username='a').exists())
+        self.assertFalse(ActivityLog.objects.filter(action='x').exists())
+
+    def test_dernier_compte_cooperative_efface_toute_la_cooperative(self):
+        from apps.accounts.purge import purge
+        from apps.accounts.models import User
+        from apps.lots.models import Lot
+        from apps.parcels.models import Parcel
+        purge(self.coop_user)
+        self.assertFalse(Cooperative.objects.filter(pk=self.coop.pk).exists())
+        self.assertFalse(Parcel.objects.exists() or Lot.objects.exists())
+        self.assertFalse(User.objects.filter(username__in=['a', 'c']).exists())
+        self.assertTrue(Producer.objects.filter(field_id_base='K1').exists())                      # autre coopérative intacte
