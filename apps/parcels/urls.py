@@ -4,6 +4,7 @@ from .deforestation_views import DeforestationAnalyzeView, LandZoneListView
 from .legacy_views import LegacyParcelListView, LegacyParcelImportView, LegacyParcelSourcesView
 from .validator_views import PolygonValidatorView
 from .gis_views import GisSaveView
+from .spatial_views import OverlapView, ZoneCheckView, SpatialStatusView
 from .selfintersection_views import SelfIntersectionView, GmrUsageView, DeforestationDoneView
 
 urlpatterns = [
@@ -13,6 +14,9 @@ urlpatterns = [
     path('selfintersection/run/', SelfIntersectionView.as_view(), name='self_intersection'),
     path('deforestation/done/', DeforestationDoneView.as_view(), name='deforestation_done'),
     path('gmr/log/', GmrUsageView.as_view(), name='gmr_usage'),
+    path('spatial/overlaps/', OverlapView.as_view(), name='spatial_overlaps'),
+    path('spatial/zones/', ZoneCheckView.as_view(), name='spatial_zones'),
+    path('spatial/status/', SpatialStatusView.as_view(), name='spatial_status'),
     path('gis/save/', GisSaveView.as_view(), name='gis_save'),
     path('legacy/', LegacyParcelListView.as_view(), name='legacy_parcel_list'),
     path('legacy/import/', LegacyParcelImportView.as_view(), name='legacy_parcel_import'),

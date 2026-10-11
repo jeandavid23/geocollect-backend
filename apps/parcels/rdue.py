@@ -26,6 +26,7 @@ CATEGORY_PRIORITY = [CAT_ENCLAVE, CAT_PARC, CAT_FORET_CLASSEE, CAT_AGROFORET]
 LEGAL_OK, LEGAL_NO, LEGAL_CHECK = 'Conforme', 'Non conforme', 'A verifier'
 ZERO_OK, ZERO_NO = 'Conforme', 'Non conforme'
 COVER_FOREST, COVER_AGRI, COVER_UNKNOWN = 'Foret', 'Agriculture', 'Indetermine'
+OUTSIDE_TOLERANCE = 0.01   # part d'une parcelle d'enclave débordant dans la forêt classée, tolérée (imprécision GPS)
 RDUE_POT, RDUE_NO, RDUE_CHECK = 'Potentiellement conforme', 'Non conforme', 'A verifier'
 
 CATEGORY_LEGALITY = {
@@ -98,12 +99,24 @@ def category_of(geom_json):
             g = shapely.make_valid(g)
     except Exception:  # noqa: BLE001
         return CAT_RURAL, ''
+    found = []
     for cat, tree, geoms, names in ZONES.get():
         # prédicat exact évalué par GEOS sur géométries préparées (pas de calcul d'intersection coûteux)
         hits = tree.query(g, predicate='intersects')
         if len(hits):
-            return cat, names[int(hits[0])]
-    return CAT_RURAL, ''
+            found.append((cat, [geoms[int(h)] for h in hits], names[int(hits[0])]))
+    if not found:
+        return CAT_RURAL, ''
+    cat, _, name = found[0]
+    if CATEGORY_LEGALITY.get(cat) == LEGAL_OK and g.area > 0:
+        # enclave / agro-forêt qui ne couvre qu'une partie de la parcelle : la part restée dans
+        # la forêt classée ou le parc l'emporte au-delà de la tolérance (1 % de la parcelle)
+        legal = shapely.union_all([z for c, zs, _ in found if CATEGORY_LEGALITY.get(c) == LEGAL_OK for z in zs])
+        rest = shapely.difference(g, legal)
+        for c, zs, n in found:
+            if CATEGORY_LEGALITY.get(c) == LEGAL_NO and shapely.intersection(rest, shapely.union_all(zs)).area > OUTSIDE_TOLERANCE * g.area:
+                return c, n
+    return cat, name
 
 
 def apply_matrix(defor_ha, area_ha, forest2020_ha, category, tolerance_ha, forest_min_frac=0.10):

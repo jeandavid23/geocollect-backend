@@ -30,6 +30,11 @@ HANSEN_VERSION = config('HANSEN_VERSION', default='GFC-2024-v1.12')
 HANSEN_BASE = f'https://storage.googleapis.com/earthenginepartners-hansen/{HANSEN_VERSION}'
 HANSEN_LAST_YEAR = 2000 + int(HANSEN_VERSION.split('-')[1][2:]) if HANSEN_VERSION.startswith('GFC-') else 2024
 
+# Carte forêt 2020 du JRC (Commission européenne), référence de l'UE pour l'EUDR : 1 = forêt au 31/12/2020, 10 m.
+# Un seul fichier COG mondial : seules les fenêtres utiles sont téléchargées.
+JRC_URL = config('JRC_GFC2020_URL', default='https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/FOREST/GFC2020/LATEST/single-cog/JRC_GFC2020_V4_COG.tif')
+JRC_SOURCE = 'JRC Global Forest Cover 2020 V4 (Commission européenne)'
+
 PIXEL_DEG = 0.00025                 # 1 seconde d'arc = ~30 m
 TILE_PX = 40000                     # 10° / 0,00025°
 MAX_WINDOW_PX = 30_000_000          # pixels lus en une fenêtre (par couche) : ~30 Mo en uint8
@@ -224,7 +229,7 @@ def _groups(items):
 
 
 def analyze(features, standard='EUDR', tolerance_ha=0.01, alert_pct=1.0, treecover_min=FAO_TREECOVER_MIN,
-            apply_rdue=False, forest_min_frac=0.10):
+            apply_rdue=False, forest_min_frac=0.10, forest_ref='hansen'):
     """
     features : [{'geometry': GeoJSON (Polygon, MultiPolygon ou Point), 'area_ha': float|None}]
     Retourne une liste alignée sur `features`.
@@ -280,9 +285,89 @@ def analyze(features, standard='EUDR', tolerance_ha=0.01, alert_pct=1.0, treecov
                     results[it['i']] = _analyze_one(it, loss, cover, pix_ha, gr0, gc0, top, left,
                                                     min_code, treecover_min, tolerance_ha, alert_pct,
                                                     rfeatures, from_origin)
+        if forest_ref == 'jrc':
+            _apply_jrc(results, [it for items in by_tile.values() for it in items], forest_min_frac)
     if apply_rdue:
         _apply_rdue(results, by_tile, tolerance_ha, forest_min_frac)
     return results, cutoff
+
+
+def _jrc_dataset():
+    import rasterio
+    cache = _datasets()
+    ds = cache.get('jrc')
+    if ds is None:
+        ds = cache['jrc'] = rasterio.open(f'/vsicurl/{JRC_URL}')
+    return ds
+
+
+def jrc_forest_fractions(items, attempts=3):
+    """{index: part de la parcelle en forêt au 31/12/2020 selon le JRC (0..1)} — items : [{'i', 'geom'}]."""
+    from rasterio import features as rfeatures
+    from rasterio.windows import Window
+    from rasterio.windows import transform as wtransform
+    out = {}
+    ds = _jrc_dataset()
+    inv = ~ds.transform
+    boxes = []
+    for it in items:
+        minx, miny, maxx, maxy = _bounds(it['geom'])
+        c0, r0 = inv * (minx, maxy)
+        c1, r1 = inv * (maxx, miny)
+        boxes.append({'it': it, 'r0': max(0, int(r0) - 1), 'c0': max(0, int(c0) - 1),
+                      'r1': min(ds.height, int(r1) + 2), 'c1': min(ds.width, int(c1) + 2)})
+    for (gr0, gc0, gr1, gc1), group in _groups(boxes):
+        win = Window(gc0, gr0, gc1 - gc0, gr1 - gr0)
+        last = None
+        for _ in range(attempts):
+            try:
+                arr = _jrc_dataset().read(1, window=win)
+                break
+            except Exception as exc:  # noqa: BLE001 — coupure réseau : on rouvre le fichier
+                last = exc
+                _datasets().pop('jrc', None)
+        else:
+            raise last
+        for b in group:
+            sub_arr = arr[b['r0'] - gr0:b['r1'] - gr0, b['c0'] - gc0:b['c1'] - gc0]
+            tr = wtransform(Window(b['c0'], b['r0'], b['c1'] - b['c0'], b['r1'] - b['r0']), ds.transform)
+            mask = rfeatures.geometry_mask([b['it']['geom']], out_shape=sub_arr.shape, transform=tr, invert=True)
+            if not mask.any():
+                mask = rfeatures.geometry_mask([b['it']['geom']], out_shape=sub_arr.shape, transform=tr,
+                                               invert=True, all_touched=True)
+            out[b['it']['i']] = float((sub_arr[mask] == 1).sum()) / mask.sum() if mask.any() else 0.0
+    return out
+
+
+def _apply_jrc(results, items, forest_min_frac):
+    """Forêt au 31/12/2020 selon la carte de l'UE : remplace l'estimation Hansen et relève le statut si besoin."""
+    items = [it for it in items if results[it['i']] and results[it['i']].get('status') != STAT_NODATA]
+    if not items:
+        return
+    try:
+        fr = jrc_forest_fractions(items)
+    except Exception as exc:  # noqa: BLE001 — carte JRC injoignable : l'analyse Hansen reste valable
+        for it in items:
+            results[it['i']]['jrc_error'] = f'Carte forêt 2020 du JRC indisponible : {exc}'
+        return
+    for it in items:
+        r = results[it['i']]
+        f = fr.get(it['i'])
+        if f is None:
+            continue
+        r['hansen_forest2020_pct'] = r['forest2020_pct']
+        r['jrc_forest2020_pct'] = round(f * 100.0, 1)
+        r['jrc_forest2020_ha'] = round(f * r['area_ha'], 4)
+        r['forest2020_pct'] = r['jrc_forest2020_pct']
+        r['cover2020'] = 'Foret' if f >= forest_min_frac else 'Agriculture'
+        r['forest_ref'] = 'JRC'
+        if f >= forest_min_frac and r['status'] == STAT_OK:
+            # forêt en 2020 selon l'UE sans perte détectée par Hansen : à vérifier (terrain, imagerie)
+            r['status'] = STAT_RISK
+            if r['risk_level'] == RISK_LOW:
+                r['risk_level'] = RISK_MEDIUM
+            r['note'] = (f"{r['jrc_forest2020_pct']} % de la parcelle était en forêt au 31/12/2020 "
+                         "selon la carte de l'UE (JRC).")
 
 
 RISK_ORDER = [RISK_LOW, RISK_MEDIUM, RISK_HIGH, RISK_VHIGH]

@@ -16,6 +16,7 @@ class AnalysisReport(models.Model):
         'gmr': 'Polygon & GMR (registre × polygones)',
         'import_registry': 'Import du registre',
         'import_polygons': 'Import de polygones',
+        'spatial': 'Contrôle spatial (chevauchements, zones foncières)',
     }
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

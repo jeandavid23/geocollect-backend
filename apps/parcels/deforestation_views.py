@@ -24,6 +24,7 @@ class DeforestationAnalyzeView(APIView):
         "tolerance_ha": 0.01,                     # perte négligée (bord de pixel)
         "alert_pct": 1.0,                         # perte <= 1 % -> « À risque », au-delà « Non conforme »
         "treecover_min": 10,                      # couvert 2000 minimal pour être « forêt » (FAO)
+        "forest_ref": "hansen" | "jrc",           # forêt au 31/12/2020 : estimation Hansen ou carte de l'UE (JRC)
         "features": [ {"geometry": {...}, "area_ha": 2.5}, ... ]   # 1000 max
       }
     Réponse : { "count", "standard", "cutoff_year", "source", "results": [...] } (même ordre que features)
@@ -51,12 +52,14 @@ class DeforestationAnalyzeView(APIView):
                 return Response({'detail': "Le module « Matrice RDUE » n'est pas activé pour votre organisation."},
                                 status=status.HTTP_403_FORBIDDEN)
             forest_min_frac = min(1.0, max(0.0, float(request.data.get('forest_min_frac', 0.10))))
+            # la carte JRC décrit la forêt au 31/12/2020 : elle ne vaut que pour la coupure EUDR (2020)
+            forest_ref = 'jrc' if request.data.get('forest_ref') == 'jrc' and standard == 'EUDR' else 'hansen'
         except (TypeError, ValueError):
             return Response({'detail': 'Paramètres invalides.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             results, cutoff = dc.analyze(features, standard, tolerance_ha, alert_pct, treecover_min,
-                                         apply_rdue, forest_min_frac)
+                                         apply_rdue, forest_min_frac, forest_ref)
         except Exception as exc:  # noqa: BLE001 — lecture distante des tuiles Hansen
             log.exception('Analyse Hansen impossible')
             # 503 : erreur passagère (réseau, stockage Google) — le navigateur retente le lot
@@ -67,7 +70,9 @@ class DeforestationAnalyzeView(APIView):
             'count': len(results),
             'standard': standard,
             'cutoff_year': cutoff,
-            'source': f'Hansen Global Forest Change {dc.HANSEN_VERSION} (UMD / Google)',
+            'source': f'Hansen Global Forest Change {dc.HANSEN_VERSION} (UMD / Google)'
+                      + (f' + {dc.JRC_SOURCE} pour la forêt au 31/12/2020' if forest_ref == 'jrc' else ''),
+            'forest_ref': forest_ref,
             'rdue': apply_rdue,
             'results': results,
         })
