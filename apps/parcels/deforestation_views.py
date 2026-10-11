@@ -78,12 +78,35 @@ class DeforestationAnalyzeView(APIView):
         })
 
 
+_display_cache = {'sig': None, 'data': None}
+
+
 class LandZoneListView(APIView):
-    """GET /api/v1/parcels/landuse/ : zones foncières RDUE (carte) — FeatureCollection."""
-    permission_classes = [permissions.IsAuthenticated, module_required('rdue')]
+    """
+    GET /api/v1/parcels/landuse/[?display=1] : forêts classées, parcs / réserves, agro-forêts et enclaves — FeatureCollection.
+    Couche de référence visible par tous les comptes connectés (carte interactive) ; `display=1` : contours simplifiés
+    (~10 m, gardés en mémoire) pour un affichage rapide. La matrice RDUE de l'analyse reste réservée au module « rdue ».
+    """
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        from django.db.models import Count, Max
         from .models import LandZone
-        feats = [{'type': 'Feature', 'geometry': g, 'properties': {'category': c, 'name': n, 'region': r}}
-                 for c, n, r, g in LandZone.objects.values_list('category', 'name', 'region', 'geometry')]
-        return Response({'type': 'FeatureCollection', 'features': feats})
+        rows = LandZone.objects.values_list('id', 'category', 'name', 'region', 'geometry')
+        if request.query_params.get('display') not in ('1', 'true'):
+            feats = [{'type': 'Feature', 'geometry': g, 'properties': {'id': i, 'category': c, 'name': n, 'region': r}} for i, c, n, r, g in rows]
+            return Response({'type': 'FeatureCollection', 'features': feats})
+        sig = tuple(LandZone.objects.aggregate(n=Count('id'), m=Max('id')).values())
+        if _display_cache['sig'] != sig:
+            import shapely
+            from shapely.geometry import mapping, shape
+            feats = []
+            for i, c, n, r, g in rows:
+                try:
+                    geom = shapely.set_precision(shape(g).simplify(0.0001, preserve_topology=True), 1e-6)
+                    feats.append({'type': 'Feature', 'geometry': mapping(geom),
+                                  'properties': {'id': i, 'category': c, 'name': n, 'region': r}})
+                except Exception:  # noqa: BLE001 — géométrie illisible : ignorée à l'affichage
+                    continue
+            _display_cache.update(sig=sig, data={'type': 'FeatureCollection', 'features': feats})
+        return Response(_display_cache['data'])
