@@ -315,15 +315,12 @@ class PlatformAdminDetailView(APIView):
         admin = self._get(pk)
         if admin is None:
             return Response({'detail': 'Super admin introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+        # suppression sans condition : ses coopératives restent, gérées directement par le propriétaire
         n = admin.managed_cooperatives.count()
-        if n:
-            return Response({'detail': f'Ce super admin gère encore {n} coopérative(s). Transférez-les '
-                                       '(ou suspendez le compte) avant de le supprimer.'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        _log(request, 'delete_super_admin', admin.id, admin.full_name)
+        _log(request, 'delete_super_admin', admin.id, admin.full_name + (f' ({n} coopérative(s) conservée(s))' if n else ''))
         admin.delete()
         invalidate_tenant_cache()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({'cooperatives_kept': n})
 
 
 class PlatformAssignCooperativeView(APIView):

@@ -10,7 +10,7 @@ from .serializers import (
     UserCreateSerializer, ChangePasswordSerializer, ActivityLogSerializer,
     NotificationSerializer,
 )
-from .permissions import IsSuperAdmin, IsOwner, scope_users, can_manage_user
+from .permissions import IsSuperAdmin, IsOwner, scope_users, can_manage_user, is_owner
 from .throttles import LoginThrottle, PasswordThrottle
 
 
@@ -124,10 +124,50 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_destroy(self, instance):
         self._check(instance)
-        if instance.role == 'owner':
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied('Le compte propriétaire ne peut pas être supprimé.')
-        instance.delete()
+        delete_account(self.request, instance)
+
+
+def delete_account(request, instance):
+    """
+    Suppression d'un compte. Le propriétaire supprime n'importe quel compte, sans condition, sauf le sien et le
+    dernier compte propriétaire. Les données métier restent : coopératives d'un super admin (gérées ensuite
+    directement par le propriétaire), parcelles d'un agent (sans agent), rapports et journaux (sans auteur).
+    """
+    from rest_framework.exceptions import PermissionDenied
+    from .tenancy import invalidate_tenant_cache
+    if instance.pk == request.user.pk:
+        raise PermissionDenied('Vous ne pouvez pas supprimer votre propre compte.')
+    if instance.role == 'owner':
+        if not is_owner(request.user):
+            raise PermissionDenied('Seul le propriétaire peut supprimer un compte propriétaire.')
+        if User.objects.filter(role='owner', is_active=True).exclude(pk=instance.pk).count() == 0:
+            raise PermissionDenied('Impossible de supprimer le dernier compte propriétaire actif.')
+    label = f'{instance.full_name or instance.username} ({instance.get_role_display()})'
+    coops = list(instance.managed_cooperatives.values_list('name', flat=True)) if hasattr(instance, 'managed_cooperatives') else []
+    instance.delete()
+    invalidate_tenant_cache()
+    ActivityLog.objects.create(user=request.user, action='delete_user', resource='user',
+                               details=label + (f' — coopératives conservées : {", ".join(coops)}' if coops else ''),
+                               ip_address=request.META.get('REMOTE_ADDR'))
+    return coops
+
+
+class UserBulkDeleteView(APIView):
+    """POST /api/v1/auth/users/bulk-delete/ {"ids": [...]} — propriétaire uniquement, sans condition (sauf lui-même)."""
+    permission_classes = [IsOwner]
+
+    def post(self, request):
+        ids = request.data.get('ids') or []
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Aucun compte sélectionné.'}, status=status.HTTP_400_BAD_REQUEST)
+        deleted, refused = 0, []
+        for u in User.objects.filter(pk__in=ids):
+            try:
+                delete_account(request, u)
+                deleted += 1
+            except Exception as exc:  # noqa: BLE001 — compte refusé (soi-même, dernier propriétaire)
+                refused.append({'username': u.username, 'detail': str(getattr(exc, 'detail', exc))})
+        return Response({'deleted': deleted, 'refused': refused})
 
 
 class ToggleUserActiveView(APIView):

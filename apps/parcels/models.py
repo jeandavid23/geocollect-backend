@@ -20,7 +20,8 @@ class Parcel(models.Model):
     cooperative = models.ForeignKey('cooperatives.Cooperative', on_delete=models.CASCADE, related_name='parcels')
     agent = models.ForeignKey('producers.Agent', null=True, on_delete=models.SET_NULL, related_name='parcels')
     # FIELD ID (ex: BEOUMI000245-M001)
-    field_id = models.CharField(max_length=80, unique=True, verbose_name='FIELD ID')
+    # code de la parcelle : le code du registre du producteur (1re parcelle), unique dans la coopérative
+    field_id = models.CharField(max_length=80, db_index=True, verbose_name='FIELD ID')
     name = models.CharField(max_length=255, blank=True, verbose_name='Nom de la parcelle')
     # Geometry stored as GeoJSON (JSONField — migrable vers PostGIS)
     geometry = models.JSONField(verbose_name='Géométrie GeoJSON')
@@ -53,6 +54,7 @@ class Parcel(models.Model):
         verbose_name = 'Parcelle'
         verbose_name_plural = 'Parcelles'
         ordering = ['-created_at']
+        constraints = [models.UniqueConstraint(fields=['cooperative', 'field_id'], name='parcel_field_id_unique_per_coop')]
 
     def __str__(self):
         return f'{self.field_id} — {self.area_hectares:.2f} ha ({self.get_eudr_status_display()})'

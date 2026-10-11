@@ -53,3 +53,33 @@ class CodeMatchingTests(TestCase):
         self.assertEqual((s['mapped_producers'], s['to_map'], s['linked_polygons']), (1, 1, 2))
         self.assertEqual(s['polygons_per_producer']['2'], 1)
         self.assertEqual(s['unmatched_codes'], ['INCONNU-9'])
+
+
+class OwnerDeleteTests(TestCase):
+    """Le propriétaire supprime n'importe quel compte, sauf le sien et le dernier propriétaire."""
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+        from apps.accounts.models import User
+        self.owner = User.objects.create_user(username='own', password='x-123456789', role='owner')
+        self.owner2 = User.objects.create_user(username='own2', password='x-123456789', role='owner')
+        self.sa = User.objects.create_user(username='sa', password='x-123456789', role='super_admin')
+        self.coop = Cooperative.objects.create(name='C', rccm='RC', managed_by=self.sa)
+        self.c = APIClient()
+        self.c.force_authenticate(self.owner)
+
+    def test_super_admin_avec_cooperatives(self):
+        r = self.c.delete(f'/api/v1/auth/users/{self.sa.id}/', HTTP_HOST='localhost')
+        self.assertEqual(r.status_code, 204, r.content)
+        self.coop.refresh_from_db()
+        self.assertIsNone(self.coop.managed_by)   # coopérative conservée
+
+    def test_autre_proprietaire_mais_pas_soi_meme(self):
+        r = self.c.post('/api/v1/auth/users/bulk-delete/', {'ids': [str(self.owner2.id), str(self.owner.id)]}, format='json', HTTP_HOST='localhost')
+        self.assertEqual(r.json()['deleted'], 1)
+        self.assertEqual([x['username'] for x in r.json()['refused']], ['own'])
+
+    def test_super_admin_ne_supprime_pas_un_proprietaire(self):
+        self.c.force_authenticate(self.sa)
+        r = self.c.delete(f'/api/v1/auth/users/{self.owner2.id}/', HTTP_HOST='localhost')
+        self.assertIn(r.status_code, (403, 404))

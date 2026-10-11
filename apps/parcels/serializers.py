@@ -95,15 +95,38 @@ class ParcelCreateSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({'client_id': 'Identifiant déjà utilisé.'})
                 self.instance_was_existing = True
                 return existing
+        from django.db import IntegrityError, transaction
         producer = validated_data['producer']
-        index = get_next_parcel_index(producer.id)
-        field_id = generate_parcel_field_id(producer.field_id_base, index)
-        while Parcel.objects.filter(field_id=field_id).exists():
-            index += 1
-            field_id = generate_parcel_field_id(producer.field_id_base, index)
-        validated_data['field_id'] = field_id
-        parcel = Parcel(**validated_data)
-        parcel.save()
+        coop = validated_data.get('cooperative') or producer.cooperative
+        in_coop = Parcel.objects.filter(cooperative=coop)
+        parcel = None
+        for _ in range(5):
+            # Producteur du registre sans aucun polygone : la parcelle porte EXACTEMENT son code du registre,
+            # sans ajout. Les parcelles suivantes d'un producteur déjà cartographié reçoivent un suffixe.
+            first = not Parcel.objects.filter(producer=producer).exists() and not producer.legacy_parcels.exists()
+            if first:
+                field_id = producer.field_id_base
+                if in_coop.filter(field_id=field_id).exists():
+                    raise serializers.ValidationError({'field_id': (
+                        f'Le code {field_id} est déjà porté par une autre parcelle de la coopérative : '
+                        'corrigez le code du producteur dans le registre avant de mapper.')})
+            else:
+                index = get_next_parcel_index(producer.id)
+                field_id = generate_parcel_field_id(producer.field_id_base, index)
+                while in_coop.filter(field_id=field_id).exists():
+                    index += 1
+                    field_id = generate_parcel_field_id(producer.field_id_base, index)
+            validated_data['field_id'] = field_id
+            try:
+                with transaction.atomic():
+                    parcel = Parcel(**validated_data)
+                    parcel.save()
+                break
+            except IntegrityError:
+                # deux agents ont mappé le même producteur au même instant : le second reçoit un suffixe
+                continue
+        if parcel is None:
+            raise serializers.ValidationError({'field_id': 'Code de parcelle indisponible, réessayez.'})
         parcel.run_eudr_validation()
         # Notifie la coopérative + super admins
         try:

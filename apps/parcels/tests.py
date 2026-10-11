@@ -41,3 +41,42 @@ class SpatialTests(TestCase):
         self.assertEqual(rdue.category_of(sq(-4.9, 7.0))[0], 'Foret classee')
         self.assertEqual(rdue.category_of(sq(-4.9001, 6.9999, 0.0005))[0], 'Enclave')
         self.assertEqual(rdue.category_of(sq(-4.5, 7.0))[0], 'Domaine rural')
+
+
+class ParcelCodeTests(TestCase):
+    """Un producteur du registre sans polygone : sa 1re parcelle porte EXACTEMENT son code, sans ajout."""
+
+    def setUp(self):
+        from django.test import override_settings  # noqa: F401
+        from rest_framework.test import APIClient
+        from apps.accounts.models import User
+        self.coop = Cooperative.objects.create(name='C', rccm='RC')
+        self.other = Cooperative.objects.create(name='D', rccm='RD')
+        self.user = User.objects.create_user(username='coopc', password='x-123456789', role='cooperative', cooperative=self.coop)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def post(self, producer, x=-5.0):
+        return self.client.post('/api/v1/parcels/', {
+            'producer': str(producer.id), 'name': 'P', 'village': 'V', 'culture': 'Cacao', 'area_hectares': 1.2,
+            'geometry': sq(x, 7.0)}, format='json', HTTP_HOST='localhost')
+
+    def test_code_du_registre_exact(self):
+        p = Producer.objects.create(cooperative=self.coop, field_id_base='122-NV-331', last_name='K')
+        r = self.post(p)
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.json()['field_id'], '122-NV-331')
+        # 2e parcelle du même producteur (déjà cartographié) : suffixe
+        r = self.post(p, -4.9)
+        self.assertEqual(r.json()['field_id'], '122-NV-331-M002')
+
+    def test_producteur_avec_ancien_polygone(self):
+        p = Producer.objects.create(cooperative=self.coop, field_id_base='BA-SE-354', last_name='Y')
+        LegacyParcel.objects.create(cooperative=self.coop, producer=p, code='BA-SE-354', geometry=sq(-5, 7))
+        self.assertEqual(self.post(p).json()['field_id'], 'BA-SE-354-M001')
+
+    def test_meme_code_dans_deux_cooperatives(self):
+        other_p = Producer.objects.create(cooperative=self.other, field_id_base='12', last_name='Z')
+        Parcel.objects.create(producer=other_p, cooperative=self.other, field_id='12', geometry=sq(-6, 7), village='V', area_hectares=1)
+        p = Producer.objects.create(cooperative=self.coop, field_id_base='12', last_name='K')
+        self.assertEqual(self.post(p).json()['field_id'], '12')
