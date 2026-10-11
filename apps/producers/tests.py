@@ -133,3 +133,34 @@ class PurgeTests(TestCase):
         self.assertFalse(Parcel.objects.exists() or Lot.objects.exists())
         self.assertFalse(User.objects.filter(username__in=['a', 'c']).exists())
         self.assertTrue(Producer.objects.filter(field_id_base='K1').exists())                      # autre coopérative intacte
+
+
+class TrashTests(PurgeTests):
+    """La corbeille garde tout 30 jours et restaure à l'identique."""
+
+    def test_restauration_complete(self):
+        from apps.accounts.models import Trash, User
+        from apps.accounts.purge import purge, restore
+        from apps.lots.models import Lot, LotLine
+        from apps.parcels.models import Parcel
+        before = (Producer.objects.count(), Parcel.objects.count(), Lot.objects.count(), LotLine.objects.count(), User.objects.count())
+        purge(self.coop_user)
+        self.assertEqual(Trash.objects.count(), 1)
+        self.assertFalse(Cooperative.objects.filter(pk=self.coop.pk).exists())
+        restore(Trash.objects.get())
+        after = (Producer.objects.count(), Parcel.objects.count(), Lot.objects.count(), LotLine.objects.count(), User.objects.count())
+        self.assertEqual(before, after)
+        self.assertTrue(Cooperative.objects.filter(pk=self.coop.pk).exists())
+        self.assertEqual(Parcel.objects.get(field_id='P1').agent_id, self.agent.pk)
+        self.assertTrue(User.objects.get(username='c').check_password('x-123456789'))
+        self.assertEqual(Trash.objects.count(), 0)
+
+    def test_expiration(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.accounts.models import Trash
+        from apps.accounts.purge import purge, purge_expired
+        purge(self.agent_user)
+        Trash.objects.update(expires_at=timezone.now() - timedelta(seconds=1))
+        purge_expired()
+        self.assertEqual(Trash.objects.count(), 0)

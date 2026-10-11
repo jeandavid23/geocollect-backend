@@ -101,7 +101,7 @@ class SendMessageView(APIView):
         if not ids:
             return Response({'detail': 'Aucun destinataire actif pour ce choix.'}, status=status.HTTP_400_BAD_REQUEST)
         sender = request.user.full_name or request.user.username
-        n = notify_users(ids, ntype=d['level'], title=f'{d["title"]} — message de {sender}', message=d.get('message', ''),
+        n = notify_users(ids, ntype=d['level'], category='message', title=f'{d["title"]} — message de {sender}', message=d.get('message', ''),
                          cooperative=request.user.cooperative if request.user.role in ('agent', 'cooperative') else None)
         ActivityLog.objects.create(user=request.user, action='send_message', resource='notification',
                                    details=f'{d["target"]} · {n} destinataire(s)', ip_address=request.META.get('REMOTE_ADDR'))

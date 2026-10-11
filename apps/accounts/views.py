@@ -86,7 +86,7 @@ class ChangePasswordView(APIView):
         request.user.must_change_password = False
         request.user.save()
         from .notify import notify_users, client_ip
-        notify_users([request.user], ntype='success', title='Mot de passe modifié',
+        notify_users([request.user], ntype='success', category='security', title='Mot de passe modifié',
                      message=f'Modification faite depuis l\'IP {client_ip(request)}. Si ce n\'est pas vous, contactez votre administrateur.')
         return Response({'detail': 'Mot de passe modifié.'})
 
@@ -146,7 +146,7 @@ def delete_account(request, instance):
             raise PermissionDenied('Impossible de supprimer le dernier compte propriétaire actif.')
     from .purge import purge
     label = f'{instance.full_name or instance.username} ({instance.get_role_display()})'
-    done = purge(instance)
+    done = purge(instance, deleted_by=request.user)
     invalidate_tenant_cache()
     parts = [f'{v} {k}' for k, v in done.items() if k not in ('user', 'role', 'cooperative_names', 'accounts') and isinstance(v, int) and v]
     ActivityLog.objects.create(user=request.user, action='delete_user', resource='user',
@@ -211,7 +211,7 @@ class ToggleUserActiveView(APIView):
         from .notify import notify_users, coop_accounts
         who = request.user.full_name or request.user.username
         if user.is_active:
-            notify_users([user], ntype='success', title='Votre compte est réactivé', message=f'Par {who}.')
+            notify_users([user], ntype='success', category='security', title='Votre compte est réactivé', message=f'Par {who}.')
         # la coopérative est prévenue quand un de ses agents est suspendu / réactivé par son super admin
         if user.role == 'agent' and request.user.role != 'cooperative':
             notify_users(coop_accounts(user.cooperative), ntype='info', cooperative=user.cooperative,
@@ -244,7 +244,7 @@ class ResetPasswordView(APIView):
             resource_id=str(target.id), ip_address=request.META.get('REMOTE_ADDR'),
         )
         from .notify import notify_users
-        notify_users([target], ntype='warning', title='Votre mot de passe a été réinitialisé',
+        notify_users([target], ntype='warning', category='security', title='Votre mot de passe a été réinitialisé',
                      message=f'Par {requester.full_name or requester.username}. Changez-le dans « Mon compte » après connexion.')
         # Renvoie aussi par email si une adresse existe
         try:
@@ -284,7 +284,13 @@ class NotificationListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Notification.objects.filter(recipient=self.request.user)[:100]
+        qs = Notification.objects.filter(recipient=self.request.user)
+        p = self.request.query_params
+        if p.get('category'):
+            qs = qs.filter(category=p['category'])
+        if p.get('unread') in ('1', 'true'):
+            qs = qs.filter(is_read=False)
+        return qs[:int(p.get('limit', 100)) if str(p.get('limit', '')).isdigit() else 100][:500]
 
 
 class NotificationMarkReadView(APIView):
@@ -306,3 +312,26 @@ class NotificationDeleteView(APIView):
         n = qs.count()
         qs.delete()
         return Response({'deleted': n})
+
+
+class NotificationPrefsView(APIView):
+    """
+    GET   /api/v1/auth/notifications/prefs/                 catégories + envoi par e-mail (oui / non)
+    PATCH /api/v1/auth/notifications/prefs/ {"security": true, "activity": false, …}
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .notify import CATEGORIES, wants_email
+        return Response({'email': request.user.email or '', 'categories': [
+            {'key': k, 'label': v[0], 'description': v[1], 'email': wants_email(request.user, k)} for k, v in CATEGORIES.items()]})
+
+    def patch(self, request):
+        from .notify import CATEGORIES
+        prefs = dict(request.user.notification_prefs or {})
+        for k, v in (request.data or {}).items():
+            if k in CATEGORIES:
+                prefs[k] = {**(prefs.get(k) or {}), 'email': bool(v)}
+        request.user.notification_prefs = prefs
+        request.user.save(update_fields=['notification_prefs'])
+        return self.get(request)

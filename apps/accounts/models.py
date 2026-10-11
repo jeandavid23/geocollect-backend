@@ -119,6 +119,8 @@ class Notification(models.Model):
     cooperative = models.ForeignKey('cooperatives.Cooperative', null=True, blank=True,
                                     on_delete=models.SET_NULL, related_name='notifications')
     type = models.CharField(max_length=20, choices=Type.choices, default=Type.INFO)
+    # catégorie (préférences d'e-mail) : security · message · subscription · activity · tool
+    category = models.CharField(max_length=20, default='activity', db_index=True)
     title = models.CharField(max_length=200)
     message = models.TextField(blank=True)
     is_read = models.BooleanField(default=False)
@@ -169,3 +171,31 @@ class AdminLicense(models.Model):
     def is_expired(self):
         from django.utils import timezone
         return self.expires_at is not None and self.expires_at < timezone.localdate()
+
+
+def _trash_expiry():
+    from datetime import timedelta
+    from django.utils import timezone
+    return timezone.now() + timedelta(days=30)
+
+
+class Trash(models.Model):
+    """
+    Corbeille : copie compressée de tout ce qui a été supprimé avec un compte (30 jours, restaurable par le propriétaire).
+    Passé ce délai, l'élément et ses fichiers sont effacés définitivement.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    label = models.CharField(max_length=300)
+    username = models.CharField(max_length=150)
+    role = models.CharField(max_length=20)
+    deleted_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    deleted_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(default=_trash_expiry, db_index=True)
+    summary = models.JSONField(default=dict)
+    object_count = models.PositiveIntegerField(default=0)
+    files = models.JSONField(default=list, blank=True)
+    payload = models.BinaryField()
+
+    class Meta:
+        ordering = ['-deleted_at']
+        verbose_name = 'Élément de la corbeille'

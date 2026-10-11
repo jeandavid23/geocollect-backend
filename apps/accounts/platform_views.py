@@ -319,7 +319,7 @@ class PlatformAdminDetailView(APIView):
         # suppression du super admin ET de toutes ses données (ses coopératives et tout leur contenu)
         from .purge import purge
         name = admin.full_name
-        done = purge(admin)
+        done = purge(admin, deleted_by=request.user)
         _log(request, 'delete_super_admin', pk, f'{name} et toutes ses données ({done["cooperatives"]} coopérative(s) : '
              f'{", ".join(done["cooperative_names"])})' if done['cooperatives'] else f'{name} et toutes ses données')
         invalidate_tenant_cache()

@@ -8,7 +8,8 @@ Suppression d'un compte AVEC toutes ses données (règle de la plateforme : un u
   - super admin        : toutes les coopératives qu'il gère, comme ci-dessus, et sa licence ;
   - propriétaire       : ses journaux et notifications.
 Les fichiers (logos, documents, avatars) sont effacés du stockage. Les notifications du compte partent avec lui.
-`plan()` calcule ce qui sera supprimé (affiché avant confirmation) ; `purge()` supprime, en une transaction.
+`plan()` calcule ce qui sera supprimé (affiché avant confirmation) ; `purge()` supprime, en une transaction, et garde
+une copie compressée 30 jours dans la corbeille (`Trash`) : le propriétaire peut tout restaurer pendant ce délai.
 """
 from django.db import transaction
 from django.db.models import Q
@@ -60,44 +61,125 @@ def plan(user):
     }
 
 
-def _delete_files(qs, field):
-    for obj in qs:
-        f = getattr(obj, field, None)
-        if f:
-            try:
-                f.delete(save=False)
-            except Exception:  # noqa: BLE001 — fichier déjà absent du stockage
-                pass
+class _Snapshot:
+    """
+    Supprime par étapes (avec les mêmes cascades que Django) en gardant une copie de TOUT ce qui disparaît :
+    objets supprimés, liens remis à vide (SET_NULL) et fichiers (effacés seulement à l'expiration de la corbeille).
+    """
+
+    def __init__(self):
+        self.objects = {}      # (modèle, pk) → objet sérialisé (copie faite AVANT la suppression)
+        self.relinks = []      # [label du modèle, pk, attribut, ancienne valeur] (liens SET_NULL à rétablir)
+        self.files = []        # chemins de fichiers à effacer à l'expiration
+
+    def delete(self, objs, files=()):
+        from django.db.models.deletion import Collector
+        objs = list(objs)
+        if not objs:
+            return
+        for obj in objs:
+            for field in files:
+                f = getattr(obj, field, None)
+                if f:
+                    self.files.append(f.name)
+        import json
+        from django.core import serializers
+        c = Collector(using='default')
+        c.collect(objs)
+        doomed = [i for instances in c.data.values() for i in instances] + [i for qs in c.fast_deletes for i in qs]
+        for d in json.loads(serializers.serialize('json', doomed)):
+            self.objects[(d['model'], d['pk'])] = d
+        from django.db.models import QuerySet
+        for key, groups in c.field_updates.items():
+            field = key[0]
+            for group in groups:                      # objets ou requêtes, selon la cascade
+                rows = group if isinstance(group, QuerySet) else [group]
+                for inst in rows:
+                    old = getattr(inst, field.attname)
+                    if old is not None:
+                        self.relinks.append([inst._meta.label, str(inst.pk), field.attname, str(old)])
+        c.delete()
+
+    def payload(self):
+        import gzip
+        import json
+        data = {'objects': list(self.objects.values()), 'relinks': self.relinks}
+        return gzip.compress(json.dumps(data, ensure_ascii=False, default=str).encode()), len(self.objects)
 
 
-def purge(user):
-    """Supprime le compte et toutes ses données. Renvoie le plan effectivement appliqué."""
+def purge(user, deleted_by=None):
+    """
+    Supprime le compte et toutes ses données ; une copie part à la corbeille 30 jours (restaurable par le propriétaire).
+    Renvoie le plan effectivement appliqué.
+    """
     from apps.cooperatives.models import Cooperative, CooperativeDocument
     from apps.lots.models import Lot
     from apps.parcels.models import LegacyParcel, Parcel
     from apps.reports.models import AnalysisReport
-    from .models import ActivityLog, User
+    from .models import ActivityLog, Trash, User
 
     done = plan(user)
     coops = _coops_wiped(user)
     ids = [c.id for c in coops]
     agent = getattr(user, 'agent_profile', None) if user.role == 'agent' else None
+    label = f'{user.full_name or user.username} ({user.get_role_display()})'
+    snap = _Snapshot()
     with transaction.atomic():
         if agent is not None:
-            Parcel.objects.filter(agent=agent).delete()
-        LegacyParcel.objects.filter(uploaded_by=user).delete()
-        AnalysisReport.objects.filter(created_by=user).delete()
+            snap.delete(Parcel.objects.filter(agent=agent))
+        snap.delete(LegacyParcel.objects.filter(uploaded_by=user))
+        snap.delete(AnalysisReport.objects.filter(created_by=user))
         if ids:
             # fiches de lot d'abord : leurs lignes protègent les producteurs
-            Lot.objects.filter(cooperative_id__in=ids).delete()
+            snap.delete(Lot.objects.filter(cooperative_id__in=ids))
             accounts = User.objects.filter(cooperative_id__in=ids).exclude(pk=user.pk)
-            ActivityLog.objects.filter(user__in=accounts).delete()
-            _delete_files(accounts, 'avatar')
-            accounts.delete()                                     # agents et comptes de la coopérative
-            _delete_files(CooperativeDocument.objects.filter(cooperative_id__in=ids), 'file')
-            _delete_files(Cooperative.objects.filter(id__in=ids), 'logo')
-            Cooperative.objects.filter(id__in=ids).delete()      # producteurs, parcelles, registre, rapports…
-        ActivityLog.objects.filter(user=user).delete()
-        _delete_files([user], 'avatar')
-        user.delete()                                             # notifications, profil agent, licence
+            snap.delete(ActivityLog.objects.filter(user__in=accounts))
+            snap.delete(accounts, files=('avatar',))               # agents et comptes de la coopérative
+            for doc in CooperativeDocument.objects.filter(cooperative_id__in=ids):
+                if doc.file:
+                    snap.files.append(doc.file.name)
+            snap.delete(Cooperative.objects.filter(id__in=ids), files=('logo',))   # producteurs, parcelles, registre…
+        snap.delete(ActivityLog.objects.filter(user=user))
+        snap.delete([user], files=('avatar',))                     # notifications, profil agent, licence
+        blob, n = snap.payload()
+        Trash.objects.create(label=label, username=user.username, role=user.role, deleted_by=deleted_by,
+                             summary=done, payload=blob, object_count=n, files=snap.files)
+    purge_expired()
     return done
+
+
+def purge_expired():
+    """Efface définitivement les éléments de la corbeille de plus de 30 jours (et leurs fichiers)."""
+    from django.utils import timezone
+    from .models import Trash
+    for t in Trash.objects.filter(expires_at__lte=timezone.now()):
+        erase(t)
+
+
+def erase(trash):
+    from django.core.files.storage import default_storage
+    for name in trash.files or []:
+        try:
+            default_storage.delete(name)
+        except Exception:  # noqa: BLE001 — fichier déjà absent
+            pass
+    trash.delete()
+
+
+def restore(trash):
+    """Remet en base tout le contenu d'un élément de la corbeille (dans l'état au moment de la suppression)."""
+    import gzip
+    import json
+    from django.apps import apps as django_apps
+    from django.core import serializers
+    from django.db import connection
+    data = json.loads(gzip.decompress(bytes(trash.payload)).decode())
+    with transaction.atomic():
+        with connection.constraint_checks_disabled():
+            for obj in serializers.deserialize('json', json.dumps(data['objects'])):
+                obj.save()
+        for label, pk, attname, old in data.get('relinks', []):
+            model = django_apps.get_model(label)
+            model.objects.filter(pk=pk).update(**{attname: old})
+        connection.check_constraints()
+        trash.delete()

@@ -17,21 +17,62 @@ FAILED_LOGIN_LIMIT = 5                   # échecs avant alerte
 FAILED_LOGIN_WINDOW = 15 * 60
 
 
-def _create(user_ids, *, title, message='', ntype='info', cooperative=None):
+# Catégories de notifications : libellé, description, envoi par e-mail par défaut (réglable dans « Notifications »)
+CATEGORIES = {
+    'security': ('Sécurité du compte', 'Nouvelles connexions, tentatives échouées, mot de passe modifié ou réinitialisé.', True),
+    'message': ('Messages', 'Messages envoyés par votre coopérative, votre super admin ou le propriétaire.', True),
+    'subscription': ('Abonnement', 'Échéance et renouvellement de la licence.', True),
+    'activity': ('Activité', 'Parcelles mappées, imports de registre et de polygones, fiches de lot.', False),
+    'tool': ('Analyses et outils', 'Fin des analyses de déforestation, contrôles de polygones, rapports.', False),
+}
+
+
+def wants_email(user, category):
+    prefs = (user.notification_prefs or {}).get(category) or {}
+    return prefs.get('email', CATEGORIES.get(category, ('', '', False))[2])
+
+
+def _send_emails(user_ids, title, message, category):
+    """E-mails en arrière-plan (jamais bloquant) pour les destinataires qui l'ont choisi."""
+    import threading
+    from django.conf import settings
+    from django.core.mail import send_mail
+    from .models import User
+    recipients = [u.email for u in User.objects.filter(pk__in=user_ids, is_active=True).exclude(email__isnull=True).exclude(email='')
+                  if wants_email(u, category)]
+    if not recipients:
+        return
+
+    def run():
+        for to in recipients:
+            try:
+                send_mail(f'GeoCollect EUDR — {title}', f'{message}\n\n—\nVous recevez cet e-mail selon vos préférences de notification '
+                          f'(GeoCollect → Notifications).', settings.DEFAULT_FROM_EMAIL, [to], fail_silently=True)
+            except Exception:  # noqa: BLE001
+                log.exception('E-mail de notification')
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _create(user_ids, *, title, message='', ntype='info', cooperative=None, category='activity'):
     from .models import Notification
 
-    objs = [Notification(recipient_id=uid, cooperative=cooperative, type=ntype, title=title[:200], message=message)
-            for uid in {u for u in user_ids if u}]
+    ids = {u for u in user_ids if u}
+    objs = [Notification(recipient_id=uid, cooperative=cooperative, type=ntype, category=category, title=title[:200], message=message)
+            for uid in ids]
     if objs:
         Notification.objects.bulk_create(objs)
+        try:
+            _send_emails(ids, title[:200], message, category)
+        except Exception:  # noqa: BLE001
+            log.exception('E-mails de notification')
     return len(objs)
 
 
-def notify_users(users, *, title, message='', ntype='info', cooperative=None):
+def notify_users(users, *, title, message='', ntype='info', cooperative=None, category='activity'):
     """Notifie une liste d'utilisateurs (objets ou identifiants)."""
     try:
         return _create([getattr(u, 'id', u) for u in users], title=title, message=message, ntype=ntype,
-                       cooperative=cooperative)
+                       cooperative=cooperative, category=category)
     except Exception:  # noqa: BLE001 — une notification ne doit jamais faire échouer l'action
         log.exception('Notification')
         return 0
@@ -60,7 +101,7 @@ def coop_managers(cooperative, *, with_owner=True):
     return ids
 
 
-def notify_cooperative(cooperative, *, title, message='', ntype='info', exclude_user=None):
+def notify_cooperative(cooperative, *, title, message='', ntype='info', exclude_user=None, category='activity'):
     """Notifie tous les membres de la coopérative, son super admin gestionnaire et le propriétaire."""
     from .models import User
 
@@ -72,7 +113,7 @@ def notify_cooperative(cooperative, *, title, message='', ntype='info', exclude_
     recipients.update(owners())
     if exclude_user is not None:
         recipients.discard(getattr(exclude_user, 'id', exclude_user))
-    notify_users(recipients, title=title, message=message, ntype=ntype, cooperative=cooperative)
+    notify_users(recipients, title=title, message=message, ntype=ntype, cooperative=cooperative, category=category)
 
 
 # ─── Connexions ────────────────────────────────────────────────────────────────
@@ -104,7 +145,7 @@ def notify_login(user, request, previous=None):
         ip, device = client_ip(request), _device(request)
         name = user.full_name or user.username
         if previous and (previous[0] != ip or previous[1] != device):
-            notify_users([user], ntype='warning', title='Nouvelle connexion à votre compte',
+            notify_users([user], ntype='warning', category='security', title='Nouvelle connexion à votre compte',
                          message=f'{device} · IP {ip}. Si ce n\'est pas vous, changez votre mot de passe (Mon compte).')
 
         if cache.add(f'login-notice:{user.pk}', 1, LOGIN_NOTICE_COOLDOWN):
@@ -124,7 +165,7 @@ def notify_login(user, request, previous=None):
                 from django.utils import timezone
                 left = (lic.expires_at - timezone.localdate()).days
                 if 0 <= left <= 7 and cache.add(f'expiry-notice:{user.pk}:{timezone.localdate()}', 1, 86400):
-                    notify_users([user], ntype='warning', title='Votre abonnement arrive à échéance',
+                    notify_users([user], ntype='warning', category='subscription', title='Votre abonnement arrive à échéance',
                                  message=f'Fin le {lic.expires_at:%d/%m/%Y} ({left} jour(s)). Contactez GeoLab Service pour le renouveler.')
     except Exception:  # noqa: BLE001
         log.exception('Notification de connexion')
@@ -143,9 +184,9 @@ def notify_failed_login(username, request):
         if user is None:
             return
         msg = f'{n} mots de passe erronés en moins de 15 min (IP {client_ip(request)}).'
-        notify_users([user], ntype='error', title='Tentatives de connexion échouées',
+        notify_users([user], ntype='error', category='security', title='Tentatives de connexion échouées',
                      message=msg + ' Si ce n\'est pas vous, changez votre mot de passe.')
-        notify_users(owners(), ntype='error', title=f'Tentatives de connexion échouées — {user.username}', message=msg)
+        notify_users(owners(), ntype='error', category='security', title=f'Tentatives de connexion échouées — {user.username}', message=msg)
     except Exception:  # noqa: BLE001
         log.exception('Alerte de connexion échouée')
 
@@ -161,4 +202,4 @@ def notify_tool(request, title, message, ntype='success'):
         ids += coop_accounts(coop)
         if coop.managed_by_id:
             ids.append(coop.managed_by_id)
-    notify_users(ids, title=title, message=message, ntype=ntype, cooperative=coop)
+    notify_users(ids, title=title, message=message, ntype=ntype, cooperative=coop, category='tool')

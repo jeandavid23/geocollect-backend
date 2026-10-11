@@ -1,7 +1,11 @@
 from django.urls import path
+from .trash_views import TrashListView, TrashItemView
 from . import platform_views as v
 
 urlpatterns = [
+    path('trash/', TrashListView.as_view(), name='platform_trash'),
+    path('trash/<uuid:pk>/', TrashItemView.as_view(), name='platform_trash_item'),
+    path('trash/<uuid:pk>/restore/', TrashItemView.as_view(), name='platform_trash_restore'),
     path('overview/', v.PlatformOverviewView.as_view(), name='platform_overview'),
     path('admins/', v.PlatformAdminListView.as_view(), name='platform_admins'),
     path('admins/<uuid:pk>/', v.PlatformAdminDetailView.as_view(), name='platform_admin_detail'),

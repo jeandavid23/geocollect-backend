@@ -27,5 +27,6 @@ urlpatterns = [
     path('notifications/targets/', MessageTargetsView.as_view(), name='message_targets'),
     path('notifications/send/', SendMessageView.as_view(), name='message_send'),
     path('notifications/clear/', views.NotificationDeleteView.as_view(), name='notifications_clear'),
+    path('notifications/prefs/', views.NotificationPrefsView.as_view(), name='notification_prefs'),
     path('notifications/read/', views.NotificationMarkReadView.as_view(), name='notifications_read'),
 ]

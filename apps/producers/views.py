@@ -59,7 +59,7 @@ class AgentDetailView(generics.RetrieveUpdateDestroyAPIView):
         from apps.accounts.purge import purge
         user = instance.user
         label = f'{user.full_name if user else ""} ({instance.code})'
-        done = purge(user) if user is not None and user.role == 'agent' else None
+        done = purge(user, deleted_by=self.request.user) if user is not None and user.role == 'agent' else None
         if done is None:
             instance.delete()
         ActivityLog.objects.create(user=self.request.user, action='delete_agent', resource='agent', resource_id=str(instance.id),
