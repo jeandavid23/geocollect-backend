@@ -216,7 +216,8 @@ class ProducerBulkImportView(APIView):
             if not isinstance(row, dict):
                 errors.append({'index': i, 'errors': {'detail': 'Ligne invalide.'}})
                 continue
-            code = str(row.get('code') or '').strip()[:50]
+            from .matching import clean_code
+            code = clean_code(row.get('code'))
             if use_codes and not code:
                 errors.append({'index': i, 'errors': {'code': 'Code producteur absent : ligne non importée.'}})
                 continue
@@ -230,16 +231,21 @@ class ProducerBulkImportView(APIView):
                 # 1) Lignes avec le code du registre : ce code EST l'identifiant du producteur (jamais régénéré).
                 #    Un code déjà connu dans la coopérative met à jour le producteur au lieu d'en créer un doublon.
                 coded = [(d, raw_codes[k]) for k, d in enumerate(valid) if raw_codes[k]]
-                existing = {p.field_id_base: p for p in Producer.objects.filter(
-                    cooperative=cooperative, field_id_base__in=[c for _, c in coded])}
+                # code déjà connu, même écrit autrement (« BA_SE_354 » = « BA-SE-354 ») : mise à jour, pas de doublon
+                keys = {normalize_code(c) for _, c in coded}
+                existing = {}
+                for p in Producer.objects.filter(cooperative=cooperative).filter(
+                        Q(field_id_base__in=[c for _, c in coded]) | Q(match_key__in=keys)):
+                    existing.setdefault(p.match_key, p)
                 seen = set()
                 objs = []
                 for data, code in coded:
-                    if code in seen:
+                    key = normalize_code(code)
+                    if key in seen:
                         errors.append({'index': None, 'errors': {'code': f'Code {code} en double dans le fichier : seule la 1re ligne est prise.'}})
                         continue
-                    seen.add(code)
-                    p = existing.get(code)
+                    seen.add(key)
+                    p = existing.get(key)
                     if p is not None:
                         extra = {**(p.extra_data or {}), **data.pop('extra_data', {})}
                         for k, v in data.items():
@@ -379,13 +385,11 @@ class ProducerRecodeView(APIView):
 
     @staticmethod
     def _value(v):
-        if v is None:
-            return ''
-        if isinstance(v, float) and v.is_integer():
-            v = int(v)
-        return str(v).strip()[:50]
+        from .matching import clean_code
+        return clean_code(v)
 
     def _plan(self, coop, column):
+        from .matching import normalize_code
         producers = list(Producer.objects.filter(cooperative=coop).only('id', 'field_id_base', 'extra_data'))
         new_codes, seen, dup, missing = {}, set(), [], 0
         for p in producers:
@@ -393,15 +397,16 @@ class ProducerRecodeView(APIView):
             if not code:
                 missing += 1
                 continue
-            if code in seen:
+            key = normalize_code(code)
+            if key in seen:
                 dup.append(code)
                 continue
-            seen.add(code)
+            seen.add(key)
             new_codes[p.id] = code
         # codes déjà pris par des producteurs qui ne sont pas recodés
-        kept = {p.field_id_base for p in producers if p.id not in new_codes}
-        conflicts = [c for c in new_codes.values() if c in kept]
-        for pid in [k for k, c in new_codes.items() if c in kept]:
+        kept = {normalize_code(p.field_id_base) for p in producers if p.id not in new_codes}
+        conflicts = [c for c in new_codes.values() if normalize_code(c) in kept]
+        for pid in [k for k, c in new_codes.items() if normalize_code(c) in kept]:
             new_codes.pop(pid)
         changes = sum(1 for p in producers if p.id in new_codes and new_codes[p.id] != p.field_id_base)
         return producers, new_codes, {'producers': len(producers), 'recoded': changes, 'unchanged': len(new_codes) - changes,

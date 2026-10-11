@@ -120,14 +120,13 @@ class LegacyParcelImportView(APIView):
         # code producteur / code parcelle lu dans les attributs → rattachement au producteur du registre
         code_field = str(request.data.get('code_field') or '').strip()
         if code_field:
-            from apps.producers.matching import normalize_code, producer_for
-            from apps.producers.models import Producer
-            index = dict(Producer.objects.filter(cooperative=cooperative).exclude(match_key='').values_list('match_key', 'id'))
+            from apps.producers.matching import normalize_code, CodeIndex
+            index = CodeIndex.for_cooperative(cooperative)
             for o in objs:
                 raw = o.properties.get(code_field)
                 o.code = '' if raw is None else str(raw).strip()[:100]
                 o.match_key = normalize_code(o.code) or ''
-                o.producer_id = producer_for(o.match_key, index)
+                o.producer_id = index.lookup(o.match_key)[0]
 
         with transaction.atomic():
             if request.data.get('replace') and source:
