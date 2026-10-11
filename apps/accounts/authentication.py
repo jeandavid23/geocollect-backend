@@ -20,6 +20,12 @@ class TenantJWTAuthentication(JWTAuthentication):
         if not status['active']:
             raise AuthenticationFailed({'detail': status['reason'], 'code': 'tenant_inactive'})
         path = request.path
+        if token.get('imp_by'):
+            # « Voir comme » : consultation en lecture seule, sans les étapes de sécurité du compte consulté
+            if request.method not in ('GET', 'HEAD', 'OPTIONS'):
+                raise PermissionDenied({'detail': 'Mode consultation : lecture seule. Revenez à votre compte pour modifier.',
+                                        'code': 'read_only'})
+            return user, token
         if not any(path.startswith(p) for p in GATE_OPEN):
             if user.must_change_password:
                 raise PermissionDenied({'detail': 'Mot de passe provisoire : choisissez votre mot de passe pour continuer.',

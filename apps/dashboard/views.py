@@ -286,3 +286,54 @@ class CoopActionsView(APIView):
         return Response({'cooperative': coop.name, 'steps': steps, 'actions': actions, 'spatial_at': sp['at'],
                          'counts': {'producers': m['producers'], 'to_map': m['to_map'], 'parcels': n_parcels,
                                     'legacy_polygons': m['legacy_polygons'], 'agents': n_agents}})
+
+
+class CoopCompareView(APIView):
+    """
+    GET /api/v1/dashboard/admin/compare/ : une ligne par coopérative accessible (super admin : les siennes ;
+    propriétaire : toutes) — producteurs, % cartographiés, parcelles, polygones, agents, lots, contrôles (si calculés).
+    """
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request):
+        from django.core.cache import cache
+        from django.db.models import Exists, Max, OuterRef, Q
+        from apps.accounts.models import User
+        from apps.lots.models import Lot
+        from apps.parcels.models import LegacyParcel
+        from apps.registry.models import RegistrySheet
+
+        coops = list(managed_cooperatives(request.user).select_related('managed_by').order_by('name'))
+        ids = [c.id for c in coops]
+        has_poly = Exists(Parcel.objects.filter(producer=OuterRef('pk'))) | Exists(LegacyParcel.objects.filter(producer=OuterRef('pk')))
+        prod = {r['cooperative']: r for r in Producer.objects.filter(cooperative_id__in=ids).annotate(has=has_poly)
+                .values('cooperative').annotate(total=Count('id'), mapped=Count('id', filter=Q(has=True)))}
+        parcels = dict(Parcel.objects.filter(cooperative_id__in=ids).values('cooperative').annotate(n=Count('id')).values_list('cooperative', 'n'))
+        non_conf = dict(Parcel.objects.filter(cooperative_id__in=ids, eudr_status='non_compliant').values('cooperative').annotate(n=Count('id')).values_list('cooperative', 'n'))
+        legacy = dict(LegacyParcel.objects.filter(cooperative_id__in=ids).values('cooperative').annotate(n=Count('id')).values_list('cooperative', 'n'))
+        agents = dict(Agent.objects.filter(cooperative_id__in=ids, is_active=True).values('cooperative').annotate(n=Count('id')).values_list('cooperative', 'n'))
+        lots = dict(Lot.objects.filter(cooperative_id__in=ids).exclude(status='brouillon').values('cooperative').annotate(n=Count('id')).values_list('cooperative', 'n'))
+        last_parcel = dict(Parcel.objects.filter(cooperative_id__in=ids).values('cooperative').annotate(m=Max('created_at')).values_list('cooperative', 'm'))
+        last_registry = dict(RegistrySheet.objects.filter(cooperative_id__in=ids).values('cooperative').annotate(m=Max('updated_at')).values_list('cooperative', 'm'))
+        accounts = {}
+        for uid, cid in User.objects.filter(cooperative_id__in=ids, role='cooperative', is_active=True).order_by('created_at').values_list('id', 'cooperative'):
+            accounts.setdefault(cid, uid)
+
+        rows = []
+        for c in coops:
+            p = prod.get(c.id, {'total': 0, 'mapped': 0})
+            sp = cache.get(f'coop-actions-spatial:{c.id}') or {}
+            ov, zn = sp.get('overlap') or {}, sp.get('zones') or {}
+            last = max([d for d in (last_parcel.get(c.id), last_registry.get(c.id)) if d], default=None)
+            rows.append({
+                'id': str(c.id), 'name': c.name, 'is_active': c.is_active,
+                'managed_by': (c.managed_by.full_name or c.managed_by.username) if c.managed_by else None,
+                'producers': p['total'], 'mapped': p['mapped'], 'to_map': p['total'] - p['mapped'],
+                'mapped_pct': round(100 * p['mapped'] / p['total']) if p['total'] else 0,
+                'parcels': parcels.get(c.id, 0), 'non_compliant': non_conf.get(c.id, 0), 'legacy_polygons': legacy.get(c.id, 0),
+                'agents': agents.get(c.id, 0), 'lots_ready': lots.get(c.id, 0),
+                'overlaps': (ov.get('autres_producteurs', 0) + ov.get('autre_cooperative', 0)) if ov else None,
+                'illegal': zn.get('illegal') if zn else None,
+                'last_activity': last, 'coop_account_id': str(accounts[c.id]) if c.id in accounts else None,
+            })
+        return Response({'cooperatives': rows})

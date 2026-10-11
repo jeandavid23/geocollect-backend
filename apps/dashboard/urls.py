@@ -3,6 +3,7 @@ from . import views
 
 urlpatterns = [
     path('admin/', views.AdminDashboardView.as_view(), name='admin_dashboard'),
+    path('admin/compare/', views.CoopCompareView.as_view(), name='admin_compare'),
     path('coop/', views.CoopDashboardView.as_view(), name='coop_dashboard'),
     path('coop/actions/', views.CoopActionsView.as_view(), name='coop_actions'),
     path('agent/', views.AgentDashboardView.as_view(), name='agent_dashboard'),

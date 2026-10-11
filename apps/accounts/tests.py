@@ -64,3 +64,35 @@ class SecurityTests(TestCase):
     def test_jeton_mfa_falsifie(self):
         v = APIClient().post('/api/v1/auth/mfa/verify/', {'mfa_token': 'faux', 'code': '123456'}, format='json', **H)
         self.assertEqual(v.status_code, 401)
+
+
+class ImpersonationTests(TestCase):
+    """« Voir comme » : lecture seule, limité aux comptes que l'on gère."""
+
+    def setUp(self):
+        from apps.cooperatives.models import Cooperative
+        from rest_framework_simplejwt.tokens import AccessToken
+        self.sa = User.objects.create_user(username='sa', password='Sa-Secret-2026', role='super_admin', totp_enabled=True)
+        self.other_sa = User.objects.create_user(username='sa2', password='Sa-Secret-2026', role='super_admin', totp_enabled=True)
+        mine = Cooperative.objects.create(name='Mine', rccm='R1', managed_by=self.sa)
+        other = Cooperative.objects.create(name='Other', rccm='R2', managed_by=self.other_sa)
+        self.coop_user = User.objects.create_user(username='c1', password='x-123456789', role='cooperative', cooperative=mine)
+        self.other_user = User.objects.create_user(username='c2', password='x-123456789', role='cooperative', cooperative=other)
+        self.c = APIClient()
+        self.c.credentials(HTTP_AUTHORIZATION=f'Bearer {AccessToken.for_user(self.sa)}')
+
+    def test_lecture_seule(self):
+        r = self.c.post('/api/v1/auth/impersonate/', {'user': str(self.coop_user.id)}, format='json', **H)
+        self.assertEqual(r.status_code, 200, r.content)
+        v = APIClient()
+        v.credentials(HTTP_AUTHORIZATION=f'Bearer {r.json()["access"]}')
+        self.assertEqual(v.get('/api/v1/auth/me/', **H).json()['username'], 'c1')
+        self.assertEqual(v.post('/api/v1/producers/', {'last_name': 'X'}, format='json', **H).json().get('code'), 'read_only')
+
+    def test_pas_les_comptes_d_un_autre_client(self):
+        r = self.c.post('/api/v1/auth/impersonate/', {'user': str(self.other_user.id)}, format='json', **H)
+        self.assertEqual(r.status_code, 403)
+
+    def test_comparatif_limite_a_ses_cooperatives(self):
+        r = self.c.get('/api/v1/dashboard/admin/compare/', **H)
+        self.assertEqual([x['name'] for x in r.json()['cooperatives']], ['Mine'])

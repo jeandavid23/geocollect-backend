@@ -2,6 +2,7 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 from . import views
 from .mfa_views import MfaVerifyView, MfaSetupView, MfaResetView
+from .impersonation import ImpersonateView
 from .google_auth import GoogleConfigView, GoogleLoginView
 from .messaging import MessageTargetsView, SendMessageView
 
@@ -14,6 +15,7 @@ urlpatterns = [
     path('me/', views.MeView.as_view(), name='me'),
     path('change-password/', views.ChangePasswordView.as_view(), name='change_password'),
     path('users/', views.UserListCreateView.as_view(), name='user_list'),
+    path('impersonate/', ImpersonateView.as_view(), name='impersonate'),
     path('mfa/verify/', MfaVerifyView.as_view(), name='mfa_verify'),
     path('mfa/setup/', MfaSetupView.as_view(), name='mfa_setup'),
     path('users/<uuid:pk>/reset-mfa/', MfaResetView.as_view(), name='user_reset_mfa'),
