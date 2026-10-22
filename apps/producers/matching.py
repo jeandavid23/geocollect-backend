@@ -67,6 +67,15 @@ def _compact(k):
     return _no_zeros(k).replace('-', '')
 
 
+def _drop_trailing_words(k):
+    """Retire les segments finaux composés uniquement de lettres (un nom après le code), s'il reste un code avec chiffres."""
+    parts = k.split('-')
+    while len(parts) > 1 and parts[-1].isalpha() and len(parts[-1]) > 1:
+        parts.pop()
+    out = '-'.join(parts)
+    return out if any(ch.isdigit() for ch in out) else None
+
+
 def _strip(k):
     m = PARCEL_SUFFIX.match(k)
     return m.group(1) if m else None
@@ -99,6 +108,15 @@ class CodeIndex:
         """(producteur, état) — état : 'ok', 'ambigu' ou 'absent'."""
         if not key:
             return None, 'absent'
+        res = self._lookup(key)
+        if res[1] == 'absent':
+            # « GUI-029-P1 KAFANDO KARIDJATOU » : le nom du producteur suit le code → on retire les mots en lettres seules
+            short = _drop_trailing_words(key)
+            if short and short != key:
+                res = self._lookup(short)
+        return res
+
+    def _lookup(self, key):
         candidates, k = [key], key
         for _ in range(2):
             k = _strip(k)

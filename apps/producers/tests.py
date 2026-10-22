@@ -32,6 +32,12 @@ class CodeMatchingTests(TestCase):
         self.assertEqual(self.look('122-NV-331P1'), 'B')
         self.assertEqual(self.look('X9-P2'), 'F')   # producteur codé lui-même avec un code de parcelle
 
+    def test_nom_apres_le_code(self):
+        idx = CodeIndex([(normalize_code('GUI-029'), 'N'), (normalize_code('SPAM-BE-001'), 'S')])
+        self.assertEqual(idx.lookup(normalize_code('GUI-029-P1 KAFANDO KARIDJATOU'))[0], 'N')
+        self.assertEqual(idx.lookup(normalize_code('SPAM-BE-001-P1'))[0], 'S')
+        self.assertEqual(idx.lookup(normalize_code('KAFANDO KARIDJATOU'))[1], 'absent')
+
     def test_pas_de_faux_rattachement(self):
         self.assertEqual(self.look('DUP-1'), '?')   # deux producteurs : ambigu, jamais au hasard
         for code in ['122-NV-33', 'AB-770', 'ZZ-1', None, 'NULL']:
