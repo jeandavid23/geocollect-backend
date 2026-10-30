@@ -26,7 +26,7 @@ import threading
 import numpy as np
 from decouple import config
 
-HANSEN_VERSION = config('HANSEN_VERSION', default='GFC-2024-v1.12')
+HANSEN_VERSION = config('HANSEN_VERSION', default='GFC-2025-v1.13')
 HANSEN_BASE = f'https://storage.googleapis.com/earthenginepartners-hansen/{HANSEN_VERSION}'
 HANSEN_LAST_YEAR = 2000 + int(HANSEN_VERSION.split('-')[1][2:]) if HANSEN_VERSION.startswith('GFC-') else 2024
 

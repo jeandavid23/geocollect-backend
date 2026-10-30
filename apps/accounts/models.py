@@ -148,6 +148,7 @@ class AdminLicense(models.Model):
         'selfintersection': 'Self-intersection (nettoyage)',
         'gmr': 'Polygon & GMR (registre × polygones)',
         'lots': 'Fiches de lot',
+        'due_diligence': 'Diligence raisonnée EUDR (convergence de preuves, rapport DD)',
     }
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='admin_license')

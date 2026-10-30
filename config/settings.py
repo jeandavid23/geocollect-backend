@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'apps.monitoring',
     'apps.contact',
     'apps.lots',
+    'apps.duediligence',
 ]
 
 MIDDLEWARE = [
@@ -297,3 +298,22 @@ USE_TZ = True
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 MFA_ENFORCED = config('MFA_ENFORCED', default=True, cast=bool)   # double authentification obligatoire (propriétaire, super admins)
+
+
+# ── Diligence raisonnée (moteur eudr_evidence) ───────────────────────────────────────────────────
+# Cache des tuiles TMF (le serveur du JRC refuse la lecture partielle) : disque persistant conseillé sur Render.
+if config('EUDR_TMF_CACHE', default=''):
+    import os
+    os.environ['EUDR_TMF_CACHE'] = config('EUDR_TMF_CACHE')
+EUDR_THREADS = config('EUDR_THREADS', default=8, cast=int)     # lectures raster parallèles (8 : 12 000 parcelles en ~110 s)
+# WHISP (FAO) via Google Earth Engine : désactivé tant qu'un projet Earth Engine n'est pas configuré.
+WHISP_ENABLED = config('WHISP_ENABLED', default=False, cast=bool)
+GEE_PROJECT = config('GEE_PROJECT', default='')
+GEE_SERVICE_ACCOUNT = config('GEE_SERVICE_ACCOUNT', default='')
+GEE_KEY_FILE = config('GEE_KEY_FILE', default='')
+if not GEE_KEY_FILE and config('GEE_SERVICE_ACCOUNT_JSON', default=''):
+    import tempfile as _tf
+    _k = _tf.NamedTemporaryFile('w', suffix='.json', delete=False)
+    _k.write(config('GEE_SERVICE_ACCOUNT_JSON'))
+    _k.close()
+    GEE_KEY_FILE = _k.name
