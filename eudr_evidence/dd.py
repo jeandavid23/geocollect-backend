@@ -65,6 +65,84 @@ THRESHOLD_LABELS = {
     "whisp_disturbance_after_pct": "WHISP : perturbation après 2020 (%)",
 }
 
+# ── Explications du classement (identiques dans tous les outils) ──────────────────────────────────────
+
+METHOD_STEPS = [
+    {"title": "1. Contrôle de la parcelle",
+     "text": "Le contour est vérifié : coordonnées GPS valides, polygone qui ne se croise pas lui-même, polygone "
+             "obligatoire au-delà de 4 ha. Une parcelle qui échoue n'est pas analysée : elle apparaît comme rejetée, "
+             "avec le motif."},
+    {"title": "2. Y avait-il une forêt au 31/12/2020 ?",
+     "text": "Quatre cartes satellites indépendantes « votent » : JRC 2020 (la carte de référence de l'Union "
+             "européenne), TMF, WorldCover et Hansen. Une carte vote « forêt » si elle voit de la forêt sur au moins "
+             "la part minimale de la parcelle. Deux votes ou plus : forêt. Un seul vote, ou un vote de la carte JRC : "
+             "incertain. Aucun vote : pas de forêt."},
+    {"title": "3. Des arbres ont-ils disparu après 2020 ?",
+     "text": "Hansen et TMF indiquent, pixel par pixel, l'année de perte du couvert. Seules les pertes situées là "
+             "où il y avait une forêt en 2020 sont comptées, et une même perte vue par deux cartes n'est comptée "
+             "qu'une fois."},
+    {"title": "4. Le contexte",
+     "text": "La parcelle est croisée avec les aires protégées (WDPA, KBA) et le domaine foncier national (forêts "
+             "classées, parcs, enclaves). Un usage agricole établi avant 2021 (culture déjà présente, défrichement "
+             "ancien) est un argument pour un risque faible."},
+    {"title": "5. Le classement",
+     "text": "Chaque parcelle reçoit un risque (faible, à vérifier, élevé), un score de convergence de 0 à 100 (plus "
+             "il est haut, plus les preuves d'un risque concordent) et une phrase qui explique pourquoi. Les cartes "
+             "sont des aides à la décision : une parcelle « à vérifier » ou « élevé » doit être contrôlée par une "
+             "personne avant toute déclaration."},
+]
+
+RISK_MEANING = {
+    "faible": "Aucune preuve de déforestation après 2020 : la parcelle peut entrer dans la déclaration.",
+    "a_verifier": "Les sources ne concordent pas ou une preuve est isolée : une vérification humaine est nécessaire "
+                  "avant de déclarer la parcelle.",
+    "eleve": "Plusieurs preuves concordent (perte de forêt après 2020, aire protégée ou zone interdite) : la parcelle "
+             "ne doit pas être déclarée sans preuve contraire solide.",
+}
+
+REASON_EXPLAIN = {
+    "rdue_illegal": "La parcelle est dans une forêt classée ou un parc selon la base foncière nationale (matrice "
+                    "RDUE) : la production y est illégale, quel que soit l'état de la forêt.",
+    "protected_area": "Une part importante de la parcelle (au-delà du seuil) se trouve dans une aire protégée "
+                      "(WDPA ou KBA).",
+    "forest_loss_convergent": "Les cartes s'accordent sur une forêt en 2020, et au moins deux sources indépendantes "
+                              "détectent une perte de couvert après 2020, au-delà du seuil.",
+    "single_source_loss": "Une seule source détecte une perte après 2020 : la preuve est isolée, elle peut venir "
+                          "d'un nuage, d'une ombre ou d'une erreur de carte.",
+    "forest_uncertain": "Une seule carte voit de la forêt en 2020 (ou la carte de l'UE en voit) : on ne peut pas "
+                        "conclure sans vérification.",
+    "protected_area_partial": "Le contour de la parcelle touche une aire protégée sur une faible part : souvent une "
+                              "imprécision du relevé GPS, à vérifier.",
+    "forest_loss_below_threshold": "Plusieurs sources voient une perte après 2020, mais trop petite pour dépasser "
+                                   "le seuil.",
+    "forest_no_agri_evidence": "Les cartes voient de la forêt en 2020 et aucune perte ensuite, mais rien ne prouve "
+                               "un usage agricole avant 2021. C'est typique du cacao sous ombrage, que les satellites "
+                               "confondent avec la forêt (WHISP : « plus d'informations nécessaires »).",
+    "no_forest_2020": "Aucune des cartes ne voit de forêt sur la parcelle au 31/12/2020 : la règle « zéro "
+                      "déforestation » est respectée.",
+    "agri_before_cutoff": "Un usage agricole est établi avant 2021 (culture déjà présente ou défrichement ancien) "
+                          "sur la majorité de la parcelle.",
+    "forest_no_loss": "Forêt en 2020 selon les cartes, sans aucune perte détectée ensuite.",
+    "no_data": "La parcelle est trop petite ou hors de la zone couverte par les cartes : aucun pixel n'a pu être lu.",
+}
+
+REASON_ACTIONS = {
+    "rdue_illegal": "Exclure la parcelle du lot, ou fournir le titre ou la dérogation qui autorise la production.",
+    "protected_area": "Exclure la parcelle du lot, ou fournir l'autorisation de l'autorité de gestion de l'aire "
+                      "protégée.",
+    "forest_loss_convergent": "Visite terrain et comparaison des images avant / après 2020 ; exclure si la perte est "
+                              "confirmée.",
+    "single_source_loss": "Contrôle sur les images Sentinel-2 avant / après 2020 ; visite terrain en cas de doute.",
+    "forest_uncertain": "Prouver l'usage agricole avant 2021 (photos datées, attestation, âge des plants).",
+    "forest_no_agri_evidence": "Prouver l'usage agricole avant 2021 (photos datées, attestation, âge des plants).",
+    "protected_area_partial": "Vérifier le contour de la parcelle et la limite de l'aire protégée (relevé GPS).",
+    "forest_loss_below_threshold": "Contrôle sur les images Sentinel-2 avant / après 2020.",
+    "no_forest_2020": "Aucune action : parcelle déclarable.",
+    "agri_before_cutoff": "Aucune action : parcelle déclarable (garder les preuves d'usage agricole au dossier).",
+    "forest_no_loss": "Aucune action si la logique WHISP est désactivée ; sinon prouver l'usage agricole avant 2021.",
+    "no_data": "Vérifier la géométrie de la parcelle (trop petite ou hors de la zone couverte).",
+}
+
 DECISIONS = {
     "confirmer": "Risque confirmé", "lever": "Risque levé", "visite": "Visite terrain demandée",
     "documents": "Documents demandés", "exclure": "Parcelle exclue du lot",

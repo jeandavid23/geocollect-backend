@@ -6,6 +6,8 @@ Un lot ne peut passer « Validé » que si tous les contrôles bloquants sont le
 """
 from collections import defaultdict
 
+from django.db.models import Count, Q, Sum
+
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,10 +15,11 @@ from rest_framework.views import APIView
 from apps.accounts.models import ActivityLog
 from apps.accounts.permissions import IsCooperativeOrAdmin, module_required, resolve_cooperative, scope_to_cooperative
 from apps.parcels.models import Parcel
-from .models import Lot
+from . import processing, traceability as tr
+from .models import Delivery, Lot
 from .serializers import LotSerializer
 
-MAX_YIELD = {'cacao': 1500, 'cafe': 2500, 'autre': 10 ** 9}   # kg/ha : au-delà, rendement anormal (risque de mélange)
+MAX_YIELD = tr.YIELD_MAX        # kg/ha : au-delà, rendement anormal (risque de mélange) — voir traceability
 
 
 def checks(lot):
@@ -31,6 +34,11 @@ def checks(lot):
     weight = defaultdict(float)
     for l in lines:
         weight[l.producer_id] += float(l.weight_kg)
+
+    # cumul des pesées de la campagne (tous lots confondus) : une seule requête pour tous les producteurs
+    campaign_kg = {r['producer_id']: float(r['kg'] or 0) for r in Delivery.objects.filter(
+        cooperative=lot.cooperative, campaign=lot.campaign, product=lot.product, status='valide', producer_id__in=pids)
+        .values('producer_id').annotate(kg=Sum('net_kg'))}
 
     issues, producers = [], []
     for pid in dict.fromkeys(pids):
@@ -47,7 +55,14 @@ def checks(lot):
             issues.append({'level': 'bloquant', 'producer': name, 'message': f'Parcelle(s) non conforme(s) EUDR : {", ".join(bad)}.'})
         if pending:
             issues.append({'level': 'attention', 'producer': name, 'message': f'Parcelle(s) en attente de validation : {", ".join(pending)}.'})
-        if yld is not None and yld > MAX_YIELD.get(lot.product, 10 ** 9):
+        season = campaign_kg.get(pid, 0.0)
+        season_yield = season / area if area else None
+        if season_yield is not None and season > weight[pid] and season_yield > MAX_YIELD.get(lot.product, 10 ** 9):
+            issues.append({'level': 'attention', 'producer': name,
+                           'message': f'Volume livré sur la campagne {lot.campaign} : {season:,.0f} kg, soit {season_yield:,.0f} '
+                                      f'kg/ha sur {area:.2f} ha (au-delà de {MAX_YIELD[lot.product]:,} kg/ha : risque de '
+                                      'mélange avec un autre cacao).'.replace(',', ' ')})
+        elif yld is not None and yld > MAX_YIELD.get(lot.product, 10 ** 9):
             issues.append({'level': 'attention', 'producer': name,
                            'message': f'Rendement anormal : {yld:,.0f} kg/ha déclarés sur {area:.2f} ha (risque de mélange avec un autre cacao).'.replace(',', ' ')})
         producers.append({'producer': str(pid), 'name': name, 'code': line.producer.field_id_base, 'weight_kg': round(weight[pid], 1),
@@ -71,7 +86,9 @@ class LotListView(APIView):
     permission_classes = [IsCooperativeOrAdmin, module_required('lots')]
 
     def get(self, request):
-        qs = scope_to_cooperative(Lot.objects.select_related('cooperative', 'created_by').prefetch_related('lines__producer'), request.user)
+        qs = scope_to_cooperative(Lot.objects.select_related('cooperative', 'created_by').prefetch_related('lines__producer')
+                                  .annotate(valid_deliveries=Count('deliveries', filter=Q(deliveries__status='valide'))),
+                                  request.user)
         if request.query_params.get('cooperative'):
             qs = qs.filter(cooperative_id=request.query_params['cooperative'])
         return Response(LotSerializer(qs[:500], many=True).data)
@@ -97,12 +114,15 @@ class LotDetailView(APIView):
         lot = self._get(request, pk)
         if lot is None:
             return Response({'detail': 'Lot introuvable.'}, status=status.HTTP_404_NOT_FOUND)
-        return Response({**LotSerializer(lot).data, 'checks': checks(lot)})
+        return Response({**LotSerializer(lot).data, 'checks': checks(lot), 'downstream': processing.downstream(lot)})
 
     def patch(self, request, pk):
         lot = self._get(request, pk)
         if lot is None:
             return Response({'detail': 'Lot introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+        if request.data.get('status') == 'expedie' and lot.status != 'expedie':
+            return Response({'detail': "Un lot est expédié en émettant sa fiche d'accompagnement (camion, chauffeur, plombs)."},
+                            status=status.HTTP_400_BAD_REQUEST)
         if lot.status == 'expedie' and set(request.data) - {'status', 'notes'}:
             return Response({'detail': 'Lot expédié : seules les notes peuvent encore être modifiées.'}, status=status.HTTP_400_BAD_REQUEST)
         s = LotSerializer(lot, data=request.data, partial=True, context={'request': request, 'cooperative': lot.cooperative})

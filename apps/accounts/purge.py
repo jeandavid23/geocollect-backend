@@ -87,6 +87,9 @@ class _Snapshot:
         c = Collector(using='default')
         c.collect(objs)
         doomed = [i for instances in c.data.values() for i in instances] + [i for qs in c.fast_deletes for i in qs]
+        # tables de liaison plusieurs-à-plusieurs créées par Django : déjà sauvegardées dans l'objet parent
+        # (sinon la restauration les insérerait deux fois)
+        doomed = [i for i in doomed if not i._meta.auto_created]
         for d in json.loads(serializers.serialize('json', doomed)):
             self.objects[(d['model'], d['pk'])] = d
         from django.db.models import QuerySet
@@ -113,7 +116,7 @@ def purge(user, deleted_by=None):
     Renvoie le plan effectivement appliqué.
     """
     from apps.cooperatives.models import Cooperative, CooperativeDocument
-    from apps.lots.models import Lot
+    from apps.lots.models import Delivery, Lot, ProcessingBatch, ProcessingInput, TransportSlip
     from apps.parcels.models import LegacyParcel, Parcel
     from apps.reports.models import AnalysisReport
     from .models import ActivityLog, Trash, User
@@ -130,7 +133,13 @@ def purge(user, deleted_by=None):
         snap.delete(LegacyParcel.objects.filter(uploaded_by=user))
         snap.delete(AnalysisReport.objects.filter(created_by=user))
         if ids:
-            # fiches de lot d'abord : leurs lignes protègent les producteurs
+            # fiches d'accompagnement, pesées puis fiches de lot d'abord : elles protègent les lots et les producteurs
+            # lots d'usinage et de transformation issus de ces coopératives (ils protègent les lots)
+            batches = list(ProcessingBatch.objects.filter(cooperatives__in=ids).distinct().values_list('id', flat=True))
+            snap.delete(ProcessingInput.objects.filter(batch_id__in=batches))     # entrées d'abord : elles se protègent
+            snap.delete(ProcessingBatch.objects.filter(id__in=batches))
+            snap.delete(TransportSlip.objects.filter(cooperative_id__in=ids))
+            snap.delete(Delivery.objects.filter(cooperative_id__in=ids))
             snap.delete(Lot.objects.filter(cooperative_id__in=ids))
             accounts = User.objects.filter(cooperative_id__in=ids).exclude(pk=user.pk)
             snap.delete(ActivityLog.objects.filter(user__in=accounts))

@@ -50,10 +50,14 @@ class CatalogView(APIView):
     permission_classes = PERMS
 
     def get(self, request):
-        from eudr_evidence import __version__, catalog, config
+        from eudr_evidence import __version__, catalog, config, dd
         return Response({'engine_version': __version__, 'datasets': catalog.dataset_table(),
                          'sources': catalog.SOURCES, 'defaults': config.DEFAULTS, 'regulation': config.REGULATION,
-                         'whisp_configured': services.whisp_configured()})
+                         'whisp_configured': services.whisp_configured(),
+                         # textes d'explication, communs à tous les outils (moteur eudr_evidence)
+                         'explain': {'method': dd.METHOD_STEPS, 'risk': dd.RISK_MEANING, 'reasons': dd.REASON_EXPLAIN,
+                                     'actions': dd.REASON_ACTIONS, 'thresholds': dd.THRESHOLD_LABELS,
+                                     'limits': dd.TXT['limits']}})
 
 
 class SettingsView(APIView):

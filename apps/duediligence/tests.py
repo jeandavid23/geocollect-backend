@@ -118,6 +118,12 @@ class DueDiligenceTests(TestCase):
         self.assertTrue(by['P1-P2']['classification']['rdue_illegal'])     # hors enclave : forêt classée → élevé
         self.assertEqual(by['P1-P2']['classification']['risk'], 'eleve')
 
+    def test_catalogue_explique_l_analyse(self):
+        d = self.c.get('/api/v1/dd/catalog/', **H).json()
+        self.assertEqual(len(d['explain']['method']), 5)
+        self.assertIn('forest_no_agri_evidence', d['explain']['reasons'])
+        self.assertIn('min_votes', d['explain']['thresholds'])
+
     def test_module_requis(self):
         from apps.accounts.models import AdminLicense
         sa = User.objects.create_user(username='sa', password='x-123456789', role='super_admin')

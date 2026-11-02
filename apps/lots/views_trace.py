@@ -1,0 +1,176 @@
+"""
+Traçabilité des volumes — /api/v1/lots/
+  deliveries/                GET (filtres : campaign, producer, product, status, lot, free=1, q) / POST : pesées
+  deliveries/<id>/           GET (aucune suppression : une pesée erronée s'annule avec un motif)
+  deliveries/<id>/cancel/    POST {reason}
+  volumes/                   GET ?campaign=&product= : volumes par producteur comparés à la capacité des parcelles
+  transport/                 GET / POST : fiches d'accompagnement (lot validé obligatoire)
+  transport/<id>/            GET / PATCH (réception : poids à l'arrivée ; ou {"status": "annulee", "notes": motif})
+Coopérative : la sienne ; super admin et propriétaire : ?cooperative= (comme les lots).
+"""
+from django.db.models import Q
+from django.utils import timezone
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.accounts.models import ActivityLog
+from apps.accounts.permissions import IsCooperativeOrAdmin, module_required, resolve_cooperative, scope_to_cooperative
+from utils.pagination import StandardPagination
+from . import traceability as tr
+from .models import Delivery, TransportSlip
+from .serializers_trace import DeliverySerializer, TransportSlipSerializer
+
+PERMS = [IsCooperativeOrAdmin, module_required('lots')]
+RECEPTION_FIELDS = {'received_weight_kg', 'received_by', 'reception_notes'}
+
+
+def _missing_coop():
+    return Response({'detail': 'Coopérative requise.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _log(request, action, obj, details=''):
+    ActivityLog.objects.create(user=request.user, action=action, resource=obj._meta.model_name,
+                               resource_id=str(obj.pk), details=details or obj.number)
+
+
+class DeliveryListView(APIView):
+    permission_classes = PERMS
+
+    def get(self, request):
+        qs = scope_to_cooperative(Delivery.objects.select_related('producer', 'lot', 'cooperative', 'created_by'),
+                                  request.user)
+        p = request.query_params
+        for field in ('campaign', 'product', 'status', 'cooperative'):
+            if p.get(field):
+                qs = qs.filter(**{f'{field}_id' if field == 'cooperative' else field: p[field]})
+        if p.get('producer'):
+            qs = qs.filter(producer_id=p['producer'])
+        if p.get('lot'):
+            qs = qs.filter(lot_id=p['lot'])
+        if p.get('free') == '1':
+            qs = qs.filter(lot__isnull=True, status='valide')
+        if p.get('q'):
+            q = p['q'].strip()
+            qs = qs.filter(Q(number__icontains=q) | Q(producer__last_name__icontains=q)
+                           | Q(producer__first_name__icontains=q) | Q(producer__field_id_base__icontains=q))
+        pager = StandardPagination()
+        page = pager.paginate_queryset(qs, request, view=self)
+        return pager.get_paginated_response(DeliverySerializer(page, many=True).data)
+
+    def post(self, request):
+        coop = resolve_cooperative(request, request.data)
+        if coop is None:
+            return _missing_coop()
+        s = DeliverySerializer(data=request.data, context={'request': request, 'cooperative': coop})
+        s.is_valid(raise_exception=True)
+        d = s.save()
+        _log(request, 'create_delivery', d, f'{d.number} — {d.net_kg} kg')
+        return Response(DeliverySerializer(d).data, status=status.HTTP_201_CREATED)
+
+
+class DeliveryDetailView(APIView):
+    permission_classes = PERMS
+
+    def get(self, request, pk):
+        d = scope_to_cooperative(Delivery.objects.select_related('producer', 'lot', 'cooperative'), request.user) \
+            .filter(pk=pk).first()
+        if d is None:
+            return Response({'detail': 'Pesée introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(DeliverySerializer(d).data)
+
+
+class DeliveryCancelView(APIView):
+    permission_classes = PERMS
+
+    def post(self, request, pk):
+        d = scope_to_cooperative(Delivery.objects.select_related('lot'), request.user).filter(pk=pk).first()
+        if d is None:
+            return Response({'detail': 'Pesée introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+        reason = (request.data.get('reason') or '').strip()
+        if not reason:
+            return Response({'detail': "Indiquez le motif de l'annulation."}, status=status.HTTP_400_BAD_REQUEST)
+        if d.status == 'annulee':
+            return Response({'detail': 'Pesée déjà annulée.'}, status=status.HTTP_400_BAD_REQUEST)
+        if d.lot_id:
+            return Response({'detail': f'Pesée affectée au lot {d.lot.code} : retirez-la du lot avant de l\'annuler.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        d.status, d.cancel_reason = 'annulee', reason[:255]
+        d.cancelled_by, d.cancelled_at = request.user, timezone.now()
+        d.save(update_fields=['status', 'cancel_reason', 'cancelled_by', 'cancelled_at'])
+        _log(request, 'cancel_delivery', d, f'{d.number} — {reason}')
+        return Response(DeliverySerializer(d).data)
+
+
+class VolumesView(APIView):
+    permission_classes = PERMS
+
+    def get(self, request):
+        coop = resolve_cooperative(request)
+        if coop is None:
+            return _missing_coop()
+        campaign = request.query_params.get('campaign')
+        if not campaign:
+            return Response({'detail': 'Campagne requise (ex. 2026-2027).'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(tr.volumes(coop, campaign, request.query_params.get('product') or 'cacao'))
+
+
+class TransportListView(APIView):
+    permission_classes = PERMS
+
+    def get(self, request):
+        qs = scope_to_cooperative(TransportSlip.objects.select_related('lot', 'cooperative', 'created_by'), request.user)
+        if request.query_params.get('lot'):
+            qs = qs.filter(lot_id=request.query_params['lot'])
+        if request.query_params.get('cooperative'):
+            qs = qs.filter(cooperative_id=request.query_params['cooperative'])
+        return Response(TransportSlipSerializer(qs[:500], many=True).data)
+
+    def post(self, request):
+        coop = resolve_cooperative(request, request.data)
+        if coop is None:
+            return _missing_coop()
+        s = TransportSlipSerializer(data=request.data, context={'request': request, 'cooperative': coop})
+        s.is_valid(raise_exception=True)
+        slip = s.save()
+        _log(request, 'create_transport_slip', slip, f'{slip.number} — lot {slip.lot.code}')
+        return Response(TransportSlipSerializer(slip).data, status=status.HTTP_201_CREATED)
+
+
+class TransportDetailView(APIView):
+    permission_classes = PERMS
+
+    def _get(self, request, pk):
+        return scope_to_cooperative(TransportSlip.objects.select_related('lot', 'cooperative'), request.user) \
+            .filter(pk=pk).first()
+
+    def get(self, request, pk):
+        slip = self._get(request, pk)
+        if slip is None:
+            return Response({'detail': "Fiche d'accompagnement introuvable."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(TransportSlipSerializer(slip).data)
+
+    def patch(self, request, pk):
+        """Réception (poids à l'arrivée) ou annulation motivée ; les données du départ ne changent plus."""
+        slip = self._get(request, pk)
+        if slip is None:
+            return Response({'detail': "Fiche d'accompagnement introuvable."}, status=status.HTTP_404_NOT_FOUND)
+        if slip.status != 'emise':
+            return Response({'detail': 'Fiche déjà clôturée (livrée ou annulée).'}, status=status.HTTP_400_BAD_REQUEST)
+        if request.data.get('status') == 'annulee':
+            reason = (request.data.get('notes') or '').strip()
+            if not reason:
+                return Response({'detail': "Indiquez le motif de l'annulation."}, status=status.HTTP_400_BAD_REQUEST)
+            slip.status, slip.reception_notes = 'annulee', reason
+            slip.save(update_fields=['status', 'reception_notes'])
+            _log(request, 'cancel_transport_slip', slip, f'{slip.number} — {reason}')
+            return Response(TransportSlipSerializer(slip).data)
+        data = {k: v for k, v in request.data.items() if k in RECEPTION_FIELDS}
+        if data.get('received_weight_kg') in (None, ''):
+            return Response({'detail': "Indiquez le poids pesé à l'arrivée."}, status=status.HTTP_400_BAD_REQUEST)
+        s = TransportSlipSerializer(slip, data=data, partial=True,
+                                    context={'request': request, 'cooperative': slip.cooperative})
+        s.is_valid(raise_exception=True)
+        slip = s.save(status='livree', received_at=timezone.now())
+        _log(request, 'receive_transport_slip', slip, f'{slip.number} — {slip.received_weight_kg} kg reçus')
+        return Response(TransportSlipSerializer(slip).data)

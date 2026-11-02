@@ -351,7 +351,7 @@ class ProducerBulkDeleteView(APIView):
     """
     POST /api/v1/producers/bulk-delete/ {"ids": [...]}
     Supprime des producteurs de la coopérative. Protégés (non supprimés) : ceux qui ont des parcelles mappées
-    par les agents (elles seraient supprimées avec eux) ou qui figurent dans une fiche de lot.
+    par les agents (elles seraient supprimées avec eux), qui figurent dans une fiche de lot ou qui ont des pesées.
     Leurs anciens polygones ne sont pas supprimés : ils redeviennent « sans producteur ».
     """
     permission_classes = [IsCooperativeOrAdmin]
@@ -363,7 +363,7 @@ class ProducerBulkDeleteView(APIView):
         if len(ids) > 20000:
             return Response({'detail': 'Maximum 20 000 producteurs par suppression.'}, status=status.HTTP_400_BAD_REQUEST)
         qs = scope_to_cooperative(Producer.objects.filter(id__in=ids), request.user)
-        protected = qs.filter(Q(parcels__isnull=False) | Q(lot_lines__isnull=False)).distinct()
+        protected = qs.filter(Q(parcels__isnull=False) | Q(lot_lines__isnull=False) | Q(deliveries__isnull=False)).distinct()
         kept = list(protected.values_list('field_id_base', flat=True)[:50])
         n_kept = protected.count()
         deletable = qs.exclude(id__in=protected.values('id'))
@@ -474,7 +474,7 @@ class BasePurgeView(APIView):
     def _counts(coop):
         from apps.registry.models import RegistrySheet
         producers = Producer.objects.filter(cooperative=coop)
-        protected = producers.filter(Q(parcels__isnull=False) | Q(lot_lines__isnull=False)).distinct()
+        protected = producers.filter(Q(parcels__isnull=False) | Q(lot_lines__isnull=False) | Q(deliveries__isnull=False)).distinct()
         return producers, protected, RegistrySheet.objects.filter(cooperative=coop)
 
     def get(self, request):
