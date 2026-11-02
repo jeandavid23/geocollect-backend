@@ -149,7 +149,10 @@ DECISIONS = {
 }
 CONCORDANCE_LABELS = {"concordant": "Concordant", "plus_strict": "Plus strict que WHISP",
                       "moins_strict": "Moins strict que WHISP", "non_calcule": "Non calculé"}
-RISK_COLORS = {"faible": "#15803d", "a_verifier": "#d97706", "eleve": "#b91c1c"}
+# Charte GeoCollect : remplissages et badges ; différents aussi par la clarté (daltonisme, noir et blanc)
+RISK_COLORS = {"faible": "#2c6741", "a_verifier": "#e08a1e", "eleve": "#9b1c1c"}
+# Couleur de risque employée comme TEXTE sur fond blanc (contraste ≥ 4,5:1 ; l'orange seul est trop pâle)
+RISK_TEXT_COLORS = {"faible": "#2c6741", "a_verifier": "#9a520c", "eleve": "#9b1c1c"}
 SOURCE_LABELS = {**SOURCE_FOREST_LABELS, **LOSS_LABELS}
 
 TRACES_DECIMALS = 6
