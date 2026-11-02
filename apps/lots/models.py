@@ -3,6 +3,28 @@ import uuid
 from django.db import models
 
 
+class Plant(models.Model):
+    """
+    Usine (ou magasin d'exportateur) qui reçoit les lots des coopératives. Elle appartient à un client (super admin),
+    qui choisit les coopératives qui la livrent. Ses comptes (rôle « usine ») ne voient que ce qui lui est adressé.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200, verbose_name='Usine')
+    location = models.CharField(max_length=200, blank=True, verbose_name='Localité')
+    managed_by = models.ForeignKey('accounts.User', null=True, blank=True, on_delete=models.CASCADE,
+                                   related_name='managed_plants', limit_choices_to={'role': 'super_admin'})
+    cooperatives = models.ManyToManyField('cooperatives.Cooperative', blank=True, related_name='plants')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'Usine'
+
+    def __str__(self):
+        return self.name
+
+
 class Lot(models.Model):
     """
     Lot de produit (cacao, café) constitué par une coopérative à partir des livraisons de ses producteurs.
@@ -106,6 +128,8 @@ class TransportSlip(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     cooperative = models.ForeignKey('cooperatives.Cooperative', on_delete=models.CASCADE, related_name='transport_slips')
     lot = models.ForeignKey(Lot, on_delete=models.PROTECT, related_name='transport_slips')
+    plant = models.ForeignKey(Plant, null=True, blank=True, on_delete=models.SET_NULL, related_name='incoming_slips',
+                              verbose_name='Usine destinataire')
     number = models.CharField(max_length=40, unique=True, verbose_name="N° de fiche d'accompagnement")
     issued_at = models.DateTimeField(auto_now_add=True)
     origin = models.CharField(max_length=160, blank=True, verbose_name='Lieu de départ (magasin)')
@@ -151,6 +175,7 @@ class ProcessingBatch(models.Model):
     code = models.CharField(max_length=40, unique=True)
     operation = models.CharField(max_length=15, choices=list(OPERATIONS.items()), default='usinage')
     plant = models.CharField(max_length=200, verbose_name='Usine')
+    plant_ref = models.ForeignKey(Plant, null=True, blank=True, on_delete=models.SET_NULL, related_name='batches')
     process_date = models.DateField()
     notes = models.TextField(blank=True)
     status = models.CharField(max_length=10, choices=list(STATUSES.items()), default='en_cours')

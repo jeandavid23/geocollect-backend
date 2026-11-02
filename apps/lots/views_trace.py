@@ -15,18 +15,28 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import ActivityLog
-from apps.accounts.permissions import IsCooperativeOrAdmin, module_required, resolve_cooperative, scope_to_cooperative
+from apps.accounts.permissions import (IsCooperativeAdminOrPlant, IsCooperativeOrAdmin, module_required,
+                                      resolve_cooperative, scope_to_cooperative)
 from utils.pagination import StandardPagination
 from . import traceability as tr
 from .models import Delivery, TransportSlip
 from .serializers_trace import DeliverySerializer, TransportSlipSerializer
 
 PERMS = [IsCooperativeOrAdmin, module_required('lots')]
+SLIP_PERMS = [IsCooperativeAdminOrPlant, module_required('lots')]     # l'usine reçoit les fiches qui lui sont adressées
 RECEPTION_FIELDS = {'received_weight_kg', 'received_by', 'reception_notes'}
 
 
 def _missing_coop():
     return Response({'detail': 'Coopérative requise.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def slips_for(user):
+    """Fiches visibles : celles adressées à son usine pour un compte usine, sinon celles de ses coopératives."""
+    qs = TransportSlip.objects.select_related('lot', 'cooperative', 'created_by', 'plant')
+    if user.role == 'usine':
+        return qs.filter(plant_id=user.plant_id) if user.plant_id else qs.none()
+    return scope_to_cooperative(qs, user)
 
 
 def _log(request, action, obj, details=''):
@@ -116,10 +126,10 @@ class VolumesView(APIView):
 
 
 class TransportListView(APIView):
-    permission_classes = PERMS
+    permission_classes = SLIP_PERMS
 
     def get(self, request):
-        qs = scope_to_cooperative(TransportSlip.objects.select_related('lot', 'cooperative', 'created_by'), request.user)
+        qs = slips_for(request.user)
         if request.query_params.get('lot'):
             qs = qs.filter(lot_id=request.query_params['lot'])
         if request.query_params.get('cooperative'):
@@ -127,6 +137,9 @@ class TransportListView(APIView):
         return Response(TransportSlipSerializer(qs[:500], many=True).data)
 
     def post(self, request):
+        if request.user.role == 'usine':
+            return Response({'detail': "Seule la coopérative émet une fiche d'accompagnement."},
+                            status=status.HTTP_403_FORBIDDEN)
         coop = resolve_cooperative(request, request.data)
         if coop is None:
             return _missing_coop()
@@ -138,11 +151,10 @@ class TransportListView(APIView):
 
 
 class TransportDetailView(APIView):
-    permission_classes = PERMS
+    permission_classes = SLIP_PERMS
 
     def _get(self, request, pk):
-        return scope_to_cooperative(TransportSlip.objects.select_related('lot', 'cooperative'), request.user) \
-            .filter(pk=pk).first()
+        return slips_for(request.user).filter(pk=pk).first()
 
     def get(self, request, pk):
         slip = self._get(request, pk)
@@ -158,6 +170,9 @@ class TransportDetailView(APIView):
         if slip.status != 'emise':
             return Response({'detail': 'Fiche déjà clôturée (livrée ou annulée).'}, status=status.HTTP_400_BAD_REQUEST)
         if request.data.get('status') == 'annulee':
+            if request.user.role == 'usine':
+                return Response({'detail': "Seule la coopérative peut annuler une fiche d'accompagnement."},
+                                status=status.HTTP_403_FORBIDDEN)
             reason = (request.data.get('notes') or '').strip()
             if not reason:
                 return Response({'detail': "Indiquez le motif de l'annulation."}, status=status.HTTP_400_BAD_REQUEST)
@@ -166,6 +181,8 @@ class TransportDetailView(APIView):
             _log(request, 'cancel_transport_slip', slip, f'{slip.number} — {reason}')
             return Response(TransportSlipSerializer(slip).data)
         data = {k: v for k, v in request.data.items() if k in RECEPTION_FIELDS}
+        if not (data.get('received_by') or '').strip():
+            data['received_by'] = request.user.full_name or request.user.username
         if data.get('received_weight_kg') in (None, ''):
             return Response({'detail': "Indiquez le poids pesé à l'arrivée."}, status=status.HTTP_400_BAD_REQUEST)
         s = TransportSlipSerializer(slip, data=data, partial=True,

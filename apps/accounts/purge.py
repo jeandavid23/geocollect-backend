@@ -116,7 +116,7 @@ def purge(user, deleted_by=None):
     Renvoie le plan effectivement appliqué.
     """
     from apps.cooperatives.models import Cooperative, CooperativeDocument
-    from apps.lots.models import Delivery, Lot, ProcessingBatch, ProcessingInput, TransportSlip
+    from apps.lots.models import Delivery, Lot, Plant, ProcessingBatch, ProcessingInput, TransportSlip
     from apps.parcels.models import LegacyParcel, Parcel
     from apps.reports.models import AnalysisReport
     from .models import ActivityLog, Trash, User
@@ -148,6 +148,11 @@ def purge(user, deleted_by=None):
                 if doc.file:
                     snap.files.append(doc.file.name)
             snap.delete(Cooperative.objects.filter(id__in=ids), files=('logo',))   # producteurs, parcelles, registre…
+        if user.role == 'super_admin':
+            # usines du client et leurs comptes (l'usine appartient au client)
+            plants = Plant.objects.filter(managed_by=user)
+            snap.delete(User.objects.filter(role='usine', plant__in=plants), files=('avatar',))
+            snap.delete(plants)
         snap.delete(ActivityLog.objects.filter(user=user))
         snap.delete([user], files=('avatar',))                     # notifications, profil agent, licence
         blob, n = snap.payload()

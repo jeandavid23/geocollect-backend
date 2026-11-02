@@ -41,6 +41,13 @@ class IsCooperativeOrAdmin(BasePermission):
         return request.user.is_authenticated and request.user.role in ('owner', 'super_admin', 'cooperative')
 
 
+class IsCooperativeAdminOrPlant(BasePermission):
+    """Coopérative, administrateurs, ou compte d'usine (réceptions, usinage, transformation)."""
+
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.role in ('owner', 'super_admin', 'cooperative', 'usine')
+
+
 class IsAgentOrAbove(BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated
@@ -140,7 +147,7 @@ def scope_users(qs, user):
     if role == 'owner':
         return qs
     if role == 'super_admin':
-        return qs.filter(Q(pk=user.pk) | Q(cooperative__managed_by=user))
+        return qs.filter(Q(pk=user.pk) | Q(cooperative__managed_by=user) | Q(plant__managed_by=user))
     return qs.filter(pk=user.pk)
 
 
@@ -149,6 +156,8 @@ def can_manage_user(actor, target):
     if is_owner(actor):
         return True
     if actor.role == 'super_admin':
+        if target.role == 'usine':
+            return target.plant is not None and target.plant.managed_by_id == actor.pk
         return target.role in ('cooperative', 'agent') and target.cooperative is not None \
             and target.cooperative.managed_by_id == actor.pk
     if actor.role == 'cooperative':

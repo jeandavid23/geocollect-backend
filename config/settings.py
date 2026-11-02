@@ -305,7 +305,9 @@ MFA_ENFORCED = config('MFA_ENFORCED', default=True, cast=bool)   # double authen
 if config('EUDR_TMF_CACHE', default=''):
     import os
     os.environ['EUDR_TMF_CACHE'] = config('EUDR_TMF_CACHE')
-EUDR_THREADS = config('EUDR_THREADS', default=8, cast=int)     # lectures raster parallèles (8 : 12 000 parcelles en ~110 s)
+# Lectures raster parallèles de la diligence raisonnée. 3 par défaut : sûr sur l'offre gratuite de Render (512 Mo) ;
+# 8 sur une instance de 2 Go (12 000 parcelles en ~110 s au lieu de ~150 s).
+EUDR_THREADS = config('EUDR_THREADS', default=3, cast=int)
 # WHISP (FAO) via Google Earth Engine : désactivé tant qu'un projet Earth Engine n'est pas configuré.
 WHISP_ENABLED = config('WHISP_ENABLED', default=False, cast=bool)
 GEE_PROJECT = config('GEE_PROJECT', default='')

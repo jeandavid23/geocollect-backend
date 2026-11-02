@@ -25,13 +25,15 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 class UserSerializer(serializers.ModelSerializer):
     cooperative_id = serializers.SerializerMethodField()
     cooperative_name = serializers.SerializerMethodField()
+    plant_id = serializers.UUIDField(read_only=True, allow_null=True)          # compte « usine »
+    plant_name = serializers.CharField(source='plant.name', read_only=True, default=None)
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'full_name', 'phone',
             'national_id', 'photo_data',
-            'role', 'is_active', 'cooperative_id', 'cooperative_name',
+            'role', 'is_active', 'cooperative_id', 'cooperative_name', 'plant_id', 'plant_name',
             'created_at',
         ]
         read_only_fields = ['id', 'created_at', 'role', 'is_active']

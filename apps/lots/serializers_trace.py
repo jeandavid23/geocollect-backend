@@ -52,10 +52,13 @@ class TransportSlipSerializer(serializers.ModelSerializer):
     cooperative_name = serializers.CharField(source='cooperative.name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.full_name', read_only=True, default='')
     weight_gap_kg = serializers.SerializerMethodField()
+    plant_name = serializers.CharField(source='plant.name', read_only=True, default=None)
+    destination = serializers.CharField(max_length=200, required=False, allow_blank=True)
 
     class Meta:
         model = TransportSlip
         fields = ['id', 'number', 'cooperative', 'cooperative_name', 'lot', 'lot_code', 'lot_product', 'lot_campaign',
+                  'plant', 'plant_name',
                   'issued_at', 'origin', 'destination', 'consignee', 'carrier', 'vehicle_plate', 'trailer_plate',
                   'driver_name', 'driver_phone', 'driver_licence', 'bags', 'gross_weight_kg', 'seals', 'notes', 'status',
                   'received_at', 'received_weight_kg', 'received_by', 'reception_notes', 'weight_gap_kg',
@@ -74,6 +77,19 @@ class TransportSlipSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Seul un lot validé (contrôles EUDR levés) peut recevoir une fiche "
                                               "d'accompagnement.")
         return lot
+
+    def validate_plant(self, plant):
+        if plant is not None and (not plant.is_active or not plant.cooperatives.filter(pk=self.context['cooperative'].pk).exists()):
+            raise serializers.ValidationError("Cette usine ne reçoit pas les lots de la coopérative.")
+        return plant
+
+    def validate(self, data):
+        if self.instance is None:
+            if data.get('plant'):
+                data['destination'] = data['plant'].name           # la destination est l'usine choisie
+            elif not (data.get('destination') or '').strip():
+                raise serializers.ValidationError({'destination': 'Indiquez la destination ou choisissez une usine.'})
+        return data
 
     def create(self, data):
         lot = data['lot']

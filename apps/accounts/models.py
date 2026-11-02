@@ -28,6 +28,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         SUPER_ADMIN = 'super_admin', 'Super Administrateur'
         COOPERATIVE = 'cooperative', 'Coopérative'
         AGENT = 'agent', 'Agent Mappeur'
+        # Usine ou magasin d'exportateur : reçoit les lots qui lui sont adressés, enregistre usinage et transformation
+        USINE = 'usine', 'Usine'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     username = models.CharField(max_length=150, unique=True)
@@ -47,6 +49,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         on_delete=models.SET_NULL,
         related_name='users',
     )
+    # Compte « usine » : l'usine qu'il représente (voir apps.lots.models.Plant)
+    plant = models.ForeignKey('lots.Plant', null=True, blank=True, on_delete=models.SET_NULL, related_name='accounts')
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
     # Mot de passe provisoire (créé ou réinitialisé par un administrateur) : à changer à la 1re connexion
     must_change_password = models.BooleanField(default=False)

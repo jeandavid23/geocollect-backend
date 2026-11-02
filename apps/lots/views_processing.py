@@ -5,17 +5,19 @@ Usinage et transformation — /api/v1/lots/processing/
                          outputs : [{"product", "weight_kg", "reference"}]
   GET / PATCH <id>/      détail ; clôture {"status": "cloture"} ou notes
   GET <id>/trace/        remontée complète jusqu'aux producteurs, pesées et parcelles
+  GET available/         lots expédiés et produits d'usinage encore disponibles
+Compte « usine » : seulement ce qui est adressé à son usine (voir processing.usable_lots).
 """
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import ActivityLog
-from apps.accounts.permissions import IsCooperativeOrAdmin, module_required
+from apps.accounts.permissions import IsCooperativeAdminOrPlant, module_required
 from . import processing as pr
 from .models import ProcessingOutput
 
-PERMS = [IsCooperativeOrAdmin, module_required('lots')]
+PERMS = [IsCooperativeAdminOrPlant, module_required('lots')]
 
 
 def serialize(b):
@@ -56,6 +58,13 @@ class ProcessingListView(APIView):
         ActivityLog.objects.create(user=request.user, action='create_processing', resource='processing',
                                    resource_id=str(batch.id), details=batch.code)
         return Response(serialize(_query(request.user).get(pk=batch.pk)), status=status.HTTP_201_CREATED)
+
+
+class ProcessingAvailableView(APIView):
+    permission_classes = PERMS
+
+    def get(self, request):
+        return Response(pr.available(request.user))
 
 
 class ProcessingDetailView(APIView):

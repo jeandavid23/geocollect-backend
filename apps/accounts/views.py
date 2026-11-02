@@ -101,7 +101,7 @@ class UserListCreateView(generics.ListCreateAPIView):
         return [IsOwner()] if self.request.method == 'POST' else [IsSuperAdmin()]
 
     def get_queryset(self):
-        return scope_users(User.objects.select_related('cooperative').all(), self.request.user)
+        return scope_users(User.objects.select_related('cooperative', 'plant').all(), self.request.user)
 
     def get_serializer_class(self):
         return UserCreateSerializer if self.request.method == 'POST' else UserSerializer
@@ -112,7 +112,7 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsSuperAdmin]
 
     def get_queryset(self):
-        return scope_users(User.objects.select_related('cooperative').all(), self.request.user)
+        return scope_users(User.objects.select_related('cooperative', 'plant').all(), self.request.user)
 
     def _check(self, target):
         from rest_framework.exceptions import PermissionDenied

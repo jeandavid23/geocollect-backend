@@ -31,7 +31,9 @@ def allowed_coop_ids(user):
 
 
 def visible_batches(user):
-    """Lots d'usinage dont toutes les coopératives d'origine sont gérées par l'utilisateur."""
+    """Compte usine : les lots d'usinage de son usine. Sinon : ceux dont il gère toutes les coopératives d'origine."""
+    if user.role == 'usine':
+        return ProcessingBatch.objects.filter(plant_ref_id=user.plant_id) if user.plant_id else ProcessingBatch.objects.none()
     allowed = allowed_coop_ids(user)
     return (ProcessingBatch.objects.filter(cooperatives__in=allowed)
             .exclude(cooperatives__in=Cooperative.objects.exclude(id__in=allowed)).distinct())
@@ -56,6 +58,30 @@ def batch_available_kg(batches):
     return {i: (made.get(i) or Decimal(0), used.get(i) or Decimal(0)) for i in ids}
 
 
+def usable_lots(user):
+    """Lots qu'un utilisateur peut usiner : ceux adressés à son usine (compte usine), sinon ceux de ses coopératives."""
+    if user.role == 'usine':
+        return Lot.objects.filter(transport_slips__plant_id=user.plant_id,
+                                  transport_slips__status__in=('emise', 'livree')).distinct()
+    return scope_to_cooperative(Lot.objects.all(), user)
+
+
+def available(user):
+    """Ce qui peut entrer dans un usinage : lots expédiés et produits d'usinages précédents, avec le reste disponible."""
+    lots = list(usable_lots(user).filter(status='expedie').select_related('cooperative'))
+    batches = list(visible_batches(user))
+    lot_stock, batch_stock = lot_available_kg(lots), batch_available_kg(batches)
+    return {
+        'lots': [{'id': str(l.id), 'code': l.code, 'cooperative': l.cooperative.name, 'product': l.product,
+                  'campaign': l.campaign, 'net_kg': float(lot_stock[l.id][0]),
+                  'available_kg': float(lot_stock[l.id][0] - lot_stock[l.id][1])}
+                 for l in lots if lot_stock[l.id][0] > lot_stock[l.id][1]],
+        'batches': [{'id': str(b.id), 'code': b.code, 'operation': b.operation,
+                     'available_kg': float(batch_stock[b.id][0] - batch_stock[b.id][1])}
+                    for b in batches if batch_stock[b.id][0] > batch_stock[b.id][1]],
+    }
+
+
 def _uuid(value):
     try:
         return uuid.UUID(str(value))
@@ -69,7 +95,7 @@ def _check_inputs(user, inputs):
                'batch': _uuid(i['batch']) if i.get('batch') else None} for i in inputs]
     lot_ids = [i['lot'] for i in inputs if i.get('lot')]
     batch_ids = [i['batch'] for i in inputs if i.get('batch')]
-    lots = {lot.id: lot for lot in scope_to_cooperative(Lot.objects.filter(id__in=lot_ids), user)}
+    lots = {lot.id: lot for lot in usable_lots(user).filter(id__in=lot_ids)}
     batches = {b.id: b for b in visible_batches(user).filter(id__in=batch_ids)}
     if len(lots) != len(set(lot_ids)) or len(batches) != len(set(batch_ids)):
         raise ProcessingError('Lot inconnu ou hors de votre périmètre.')
@@ -98,6 +124,9 @@ def _next_code(operation, year):
 
 
 def create_batch(user, operation, plant, process_date, inputs, outputs, notes=''):
+    plant_ref = user.plant if user.role == 'usine' else None
+    if plant_ref is not None:
+        plant = plant_ref.name                        # un compte usine travaille toujours dans son usine
     if operation not in PREFIX:
         raise ProcessingError('Opération inconnue (usinage ou transformation).')
     if not (plant or '').strip():
@@ -119,7 +148,8 @@ def create_batch(user, operation, plant, process_date, inputs, outputs, notes=''
         try:
             with transaction.atomic():
                 batch = ProcessingBatch.objects.create(code=_next_code(operation, str(process_date)[:4]), operation=operation,
-                                                       plant=plant, process_date=process_date, notes=notes, created_by=user)
+                                                       plant=plant, plant_ref=plant_ref, process_date=process_date,
+                                                       notes=notes, created_by=user)
                 batch.cooperatives.set(coops)
                 ProcessingInput.objects.bulk_create([ProcessingInput(batch=batch, lot=lot, source_batch=b, weight_kg=w)
                                                      for lot, b, w in checked])

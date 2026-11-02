@@ -3,8 +3,9 @@ Multi-clients (« tenants ») : chaque super admin est un client de la plateform
 
   owner (Super Super Admin) ── voit et gère tout, crée les super admins et leur accorde des droits
      └── super_admin (client) ── ne voit que ses coopératives (Cooperative.managed_by)
-            └── cooperative ── ne voit que ses données
-                   └── agent ── ne voit que les données de sa coopérative
+            ├── cooperative ── ne voit que ses données
+            │      └── agent ── ne voit que les données de sa coopérative
+            └── usine ── ne voit que les lots qui lui sont adressés (réception, usinage, transformation)
 
 L'état d'un client (actif, abonnement expiré, modules) est mis en cache 60 s par processus
 pour éviter des allers-retours vers la base à chaque requête (la base Neon est distante).
@@ -27,6 +28,9 @@ def tenant_admin(user):
     if role in ('cooperative', 'agent'):
         coop = getattr(user, 'cooperative', None)
         return getattr(coop, 'managed_by', None) if coop else None
+    if role == 'usine':
+        plant = getattr(user, 'plant', None)
+        return getattr(plant, 'managed_by', None) if plant else None
     return None
 
 
@@ -47,6 +51,10 @@ def _compute_status(user):
         coop = getattr(user, 'cooperative', None)
         if coop is not None and not coop.is_active:
             return {'active': False, 'reason': 'Cette coopérative a été désactivée. Contactez votre administrateur.', 'modules': []}
+    if role == 'usine':
+        plant = getattr(user, 'plant', None)
+        if plant is None or not plant.is_active:
+            return {'active': False, 'reason': 'Cette usine a été désactivée. Contactez votre administrateur.', 'modules': []}
     admin = tenant_admin(user)
     if admin is not None and admin is not user and not admin.is_active:
         return {'active': False, 'reason': "L'accès de votre organisation est suspendu. Contactez votre administrateur.", 'modules': []}
