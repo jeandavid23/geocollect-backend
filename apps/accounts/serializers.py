@@ -33,10 +33,10 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'full_name', 'phone',
             'national_id', 'photo_data',
-            'role', 'is_active', 'cooperative_id', 'cooperative_name', 'plant_id', 'plant_name',
+            'role', 'is_active', 'cooperative_id', 'cooperative_name', 'plant_id', 'plant_name', 'plant_role',
             'created_at',
         ]
-        read_only_fields = ['id', 'created_at', 'role', 'is_active']
+        read_only_fields = ['id', 'created_at', 'role', 'is_active', 'plant_role']
 
     def validate_photo_data(self, value):
         # photo de profil en base64 : 2 Mo maximum (évite de saturer la base)

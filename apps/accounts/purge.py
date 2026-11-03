@@ -116,7 +116,8 @@ def purge(user, deleted_by=None):
     Renvoie le plan effectivement appliqué.
     """
     from apps.cooperatives.models import Cooperative, CooperativeDocument
-    from apps.lots.models import Delivery, Lot, Plant, ProcessingBatch, ProcessingInput, TransportSlip
+    from apps.lots.models import (Delivery, Lot, Plant, ProcessingBatch, ProcessingInput, Shipment, ShipmentItem,
+                                  TransportSlip)
     from apps.parcels.models import LegacyParcel, Parcel
     from apps.reports.models import AnalysisReport
     from .models import ActivityLog, Trash, User
@@ -136,6 +137,9 @@ def purge(user, deleted_by=None):
             # fiches d'accompagnement, pesées puis fiches de lot d'abord : elles protègent les lots et les producteurs
             # lots d'usinage et de transformation issus de ces coopératives (ils protègent les lots)
             batches = list(ProcessingBatch.objects.filter(cooperatives__in=ids).distinct().values_list('id', flat=True))
+            # expéditions qui en sortent, puis entrées : elles protègent les lots d'usinage
+            snap.delete(ShipmentItem.objects.filter(batch_id__in=batches))
+            snap.delete(Shipment.objects.filter(items__isnull=True, plant__managed_by=user))
             snap.delete(ProcessingInput.objects.filter(batch_id__in=batches))     # entrées d'abord : elles se protègent
             snap.delete(ProcessingBatch.objects.filter(id__in=batches))
             snap.delete(TransportSlip.objects.filter(cooperative_id__in=ids))

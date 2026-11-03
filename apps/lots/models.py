@@ -16,6 +16,14 @@ class Plant(models.Model):
     cooperatives = models.ManyToManyField('cooperatives.Cooperative', blank=True, related_name='plants')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Ségrégé : seul le cacao d'origine vérifiée entre à l'usinage. Bilan de masse : mélange admis, la part
+    # d'origine vérifiée est comptée en poids et suit le produit jusqu'à l'expédition.
+    TRACE_MODES = {'bilan_masse': 'Bilan de masse', 'segregue': 'Ségrégé'}
+    traceability_mode = models.CharField(max_length=12, choices=list(TRACE_MODES.items()), default='bilan_masse')
+    gap_alert_pct = models.DecimalField(max_digits=4, decimal_places=1, default=1,
+                                        verbose_name='Alerte écart de transport (%)')
+    loss_alert_pct = models.DecimalField(max_digits=4, decimal_places=1, default=15,
+                                         verbose_name="Alerte perte à l'usinage (%)")
 
     class Meta:
         ordering = ['name']
@@ -123,7 +131,8 @@ class TransportSlip(models.Model):
     Fiche d'accompagnement : document qui suit un lot (ou une partie, un camion) de la coopérative jusqu'à
     l'acheteur. À l'arrivée, le poids reçu est saisi : l'écart avec le poids au départ est tracé.
     """
-    STATUSES = {'emise': 'Émise (en route)', 'livree': 'Livrée', 'annulee': 'Annulée'}
+    STATUSES = {'emise': 'Émise (en route)', 'livree': 'Livrée', 'refusee': 'Refusée', 'annulee': 'Annulée'}
+    DECISIONS = {'accepte': 'Accepté', 'reserve': 'Accepté avec réserves', 'refuse': 'Refusé'}
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     cooperative = models.ForeignKey('cooperatives.Cooperative', on_delete=models.CASCADE, related_name='transport_slips')
@@ -151,6 +160,17 @@ class TransportSlip(models.Model):
                                              verbose_name="Poids à l'arrivée (kg)")
     received_by = models.CharField(max_length=160, blank=True)
     reception_notes = models.TextField(blank=True)
+    # Contrôle qualité à la réception (épreuve à la coupe sur 300 fèves, en %)
+    moisture_pct = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True, verbose_name='Humidité (%)')
+    bean_count = models.PositiveSmallIntegerField(null=True, blank=True, verbose_name='Grainage (fèves / 100 g)')
+    mouldy_pct = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True, verbose_name='Moisies (%)')
+    slaty_pct = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True, verbose_name='Ardoisées (%)')
+    insect_pct = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True, verbose_name='Mitées (%)')
+    germinated_pct = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True, verbose_name='Germées (%)')
+    foreign_pct = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True,
+                                      verbose_name='Corps étrangers (%)')
+    decision = models.CharField(max_length=10, choices=list(DECISIONS.items()), blank=True)
+    decision_reason = models.CharField(max_length=255, blank=True, verbose_name='Motif (réserves ou refus)')
     created_by = models.ForeignKey('accounts.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
 
     class Meta:
@@ -179,6 +199,8 @@ class ProcessingBatch(models.Model):
     process_date = models.DateField()
     notes = models.TextField(blank=True)
     status = models.CharField(max_length=10, choices=list(STATUSES.items()), default='en_cours')
+    # poids entré d'origine vérifiée (bilan de masse) : toutes les parcelles d'origine conformes
+    compliant_kg = models.DecimalField(max_digits=12, decimal_places=1, null=True, blank=True)
     # coopératives d'origine (déduites des entrées) : un lot d'usinage n'est visible que de qui les gère toutes
     cooperatives = models.ManyToManyField('cooperatives.Cooperative', related_name='processing_batches')
     created_by = models.ForeignKey('accounts.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
@@ -215,6 +237,51 @@ class ProcessingOutput(models.Model):
     product = models.CharField(max_length=20, choices=list(PRODUCTS.items()))
     weight_kg = models.DecimalField(max_digits=12, decimal_places=1)
     reference = models.CharField(max_length=80, blank=True, verbose_name='Référence (grade, n° de lot client…)')
+
+    class Meta:
+        ordering = ['id']
+
+
+class Shipment(models.Model):
+    """
+    Expédition sortante de l'usine (vers un acheteur ou à l'export). La référence de la déclaration de diligence
+    raisonnée (DDS, système TRACES de l'UE) est obligatoire pour la marquer expédiée.
+    """
+    STATUSES = {'preparee': 'En préparation', 'expediee': 'Expédiée'}
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    plant = models.ForeignKey(Plant, on_delete=models.CASCADE, related_name='shipments')
+    number = models.CharField(max_length=40, unique=True, verbose_name="N° d'expédition")
+    ship_date = models.DateField(verbose_name="Date d'expédition")
+    client = models.CharField(max_length=200, verbose_name='Client / acheteur')
+    destination_country = models.CharField(max_length=80, blank=True, verbose_name='Pays de destination')
+    container = models.CharField(max_length=40, blank=True, verbose_name='N° de conteneur')
+    seal = models.CharField(max_length=60, blank=True, verbose_name='N° de plomb')
+    bill_of_lading = models.CharField(max_length=60, blank=True, verbose_name='N° de connaissement')
+    vessel = models.CharField(max_length=120, blank=True, verbose_name='Navire')
+    dds_reference = models.CharField(max_length=60, blank=True, verbose_name='Référence DDS (TRACES)')
+    dds_verification = models.CharField(max_length=60, blank=True, verbose_name='N° de vérification DDS')
+    notes = models.TextField(blank=True)
+    status = models.CharField(max_length=10, choices=list(STATUSES.items()), default='preparee')
+    shipped_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey('accounts.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-ship_date', '-created_at']
+        verbose_name = 'Expédition'
+
+    def __str__(self):
+        return self.number
+
+
+class ShipmentItem(models.Model):
+    """Produit expédié, pris sur un lot d'usinage ou de transformation."""
+    shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, related_name='items')
+    batch = models.ForeignKey(ProcessingBatch, on_delete=models.PROTECT, related_name='shipped')
+    product = models.CharField(max_length=20, choices=list(ProcessingOutput.PRODUCTS.items()))
+    weight_kg = models.DecimalField(max_digits=12, decimal_places=1)
+    bags = models.PositiveIntegerField(default=0)
 
     class Meta:
         ordering = ['id']

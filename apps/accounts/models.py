@@ -51,6 +51,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
     # Compte « usine » : l'usine qu'il représente (voir apps.lots.models.Plant)
     plant = models.ForeignKey('lots.Plant', null=True, blank=True, on_delete=models.SET_NULL, related_name='accounts')
+    # Rôle dans l'usine : le responsable fait tout ; l'opérateur de pesée ne fait que réceptionner les camions
+    PLANT_ROLES = {'responsable': "Responsable d'usine", 'pesee': 'Opérateur de pesée'}
+    plant_role = models.CharField(max_length=12, choices=list(PLANT_ROLES.items()), blank=True, default='')
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
     # Mot de passe provisoire (créé ou réinitialisé par un administrateur) : à changer à la 1re connexion
     must_change_password = models.BooleanField(default=False)

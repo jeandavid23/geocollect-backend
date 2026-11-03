@@ -8,6 +8,7 @@ Traçabilité des volumes — /api/v1/lots/
   transport/<id>/            GET / PATCH (réception : poids à l'arrivée ; ou {"status": "annulee", "notes": motif})
 Coopérative : la sienne ; super admin et propriétaire : ?cooperative= (comme les lots).
 """
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
@@ -18,13 +19,13 @@ from apps.accounts.models import ActivityLog
 from apps.accounts.permissions import (IsCooperativeAdminOrPlant, IsCooperativeOrAdmin, module_required,
                                       resolve_cooperative, scope_to_cooperative)
 from utils.pagination import StandardPagination
-from . import traceability as tr
+from . import plant_ops, traceability as tr
 from .models import Delivery, TransportSlip
-from .serializers_trace import DeliverySerializer, TransportSlipSerializer
+from .serializers_trace import QUALITY_FIELDS, DeliverySerializer, TransportSlipSerializer
 
 PERMS = [IsCooperativeOrAdmin, module_required('lots')]
 SLIP_PERMS = [IsCooperativeAdminOrPlant, module_required('lots')]     # l'usine reçoit les fiches qui lui sont adressées
-RECEPTION_FIELDS = {'received_weight_kg', 'received_by', 'reception_notes'}
+RECEPTION_FIELDS = {'received_weight_kg', 'received_by', 'reception_notes', 'decision', 'decision_reason', *QUALITY_FIELDS}
 
 
 def _missing_coop():
@@ -147,6 +148,7 @@ class TransportListView(APIView):
         s.is_valid(raise_exception=True)
         slip = s.save()
         _log(request, 'create_transport_slip', slip, f'{slip.number} — lot {slip.lot.code}')
+        plant_ops.notify_truck_sent(slip)
         return Response(TransportSlipSerializer(slip).data, status=status.HTTP_201_CREATED)
 
 
@@ -180,14 +182,35 @@ class TransportDetailView(APIView):
             slip.save(update_fields=['status', 'reception_notes'])
             _log(request, 'cancel_transport_slip', slip, f'{slip.number} — {reason}')
             return Response(TransportSlipSerializer(slip).data)
-        data = {k: v for k, v in request.data.items() if k in RECEPTION_FIELDS}
+        return self._receive(request, slip)
+
+    def _receive(self, request, slip):
+        """Réception : poids, contrôle qualité et décision. Un lot refusé retourne à la coopérative."""
+        data = {k: (None if v == '' and k in QUALITY_FIELDS else v)
+                for k, v in request.data.items() if k in RECEPTION_FIELDS}
         if not (data.get('received_by') or '').strip():
             data['received_by'] = request.user.full_name or request.user.username
-        if data.get('received_weight_kg') in (None, ''):
+        decision = data.get('decision') or 'accepte'
+        if decision not in TransportSlip.DECISIONS:
+            return Response({'detail': 'Décision inconnue (accepte, reserve ou refuse).'}, status=status.HTTP_400_BAD_REQUEST)
+        data['decision'] = decision
+        if decision != 'accepte' and not (data.get('decision_reason') or '').strip():
+            return Response({'detail': 'Indiquez le motif des réserves ou du refus.'}, status=status.HTTP_400_BAD_REQUEST)
+        if decision != 'refuse' and data.get('received_weight_kg') in (None, ''):
             return Response({'detail': "Indiquez le poids pesé à l'arrivée."}, status=status.HTTP_400_BAD_REQUEST)
+        if decision == 'refuse' and slip.lot.processing_inputs.exists():
+            return Response({'detail': 'Ce lot est déjà entré en usinage : il ne peut plus être refusé.'},
+                            status=status.HTTP_400_BAD_REQUEST)
         s = TransportSlipSerializer(slip, data=data, partial=True,
                                     context={'request': request, 'cooperative': slip.cooperative})
         s.is_valid(raise_exception=True)
-        slip = s.save(status='livree', received_at=timezone.now())
-        _log(request, 'receive_transport_slip', slip, f'{slip.number} — {slip.received_weight_kg} kg reçus')
+        with transaction.atomic():
+            slip = s.save(status='refusee' if decision == 'refuse' else 'livree', received_at=timezone.now())
+            if decision == 'refuse' and not slip.lot.transport_slips.filter(status__in=('emise', 'livree')).exists():
+                slip.lot.status = 'valide'                  # retour à la coopérative : elle peut le réexpédier
+                slip.lot.save(update_fields=['status'])
+        _log(request, 'receive_transport_slip', slip,
+             f'{slip.number} — {TransportSlip.DECISIONS[decision]}'
+             + (f', {slip.received_weight_kg} kg reçus' if slip.received_weight_kg is not None else ''))
+        plant_ops.notify_reception(slip)
         return Response(TransportSlipSerializer(slip).data)

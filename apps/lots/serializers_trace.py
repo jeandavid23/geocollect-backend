@@ -1,7 +1,7 @@
 """Pesées et fiches d'accompagnement (sérialiseurs)."""
 from rest_framework import serializers
 
-from . import traceability as tr
+from . import plant_ops, traceability as tr
 from .models import Delivery, TransportSlip
 
 
@@ -45,6 +45,11 @@ class DeliverySerializer(serializers.ModelSerializer):
                                   created_by=self.context['request'].user, **data)
 
 
+QUALITY_FIELDS = ('moisture_pct', 'bean_count', 'mouldy_pct', 'slaty_pct', 'insect_pct', 'germinated_pct', 'foreign_pct')
+QUALITY_MAX = {'moisture_pct': 40, 'bean_count': 400, 'mouldy_pct': 100, 'slaty_pct': 100, 'insect_pct': 100,
+               'germinated_pct': 100, 'foreign_pct': 100}
+
+
 class TransportSlipSerializer(serializers.ModelSerializer):
     lot_code = serializers.CharField(source='lot.code', read_only=True)
     lot_product = serializers.CharField(source='lot.product', read_only=True)
@@ -54,6 +59,8 @@ class TransportSlipSerializer(serializers.ModelSerializer):
     weight_gap_kg = serializers.SerializerMethodField()
     plant_name = serializers.CharField(source='plant.name', read_only=True, default=None)
     destination = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    weight_gap_pct = serializers.SerializerMethodField()
+    quality = serializers.SerializerMethodField()
 
     class Meta:
         model = TransportSlip
@@ -62,8 +69,21 @@ class TransportSlipSerializer(serializers.ModelSerializer):
                   'issued_at', 'origin', 'destination', 'consignee', 'carrier', 'vehicle_plate', 'trailer_plate',
                   'driver_name', 'driver_phone', 'driver_licence', 'bags', 'gross_weight_kg', 'seals', 'notes', 'status',
                   'received_at', 'received_weight_kg', 'received_by', 'reception_notes', 'weight_gap_kg',
-                  'created_by_name']
+                  'weight_gap_pct', *QUALITY_FIELDS, 'decision', 'decision_reason', 'quality', 'created_by_name']
         read_only_fields = ['id', 'number', 'cooperative', 'issued_at', 'status', 'received_at']
+
+    def get_weight_gap_pct(self, obj):
+        return plant_ops.gap_pct(obj)
+
+    def get_quality(self, obj):
+        return plant_ops.quality(obj)
+
+    def validate(self, data):
+        for f in QUALITY_FIELDS:
+            v = data.get(f)
+            if v is not None and not 0 <= float(v) <= QUALITY_MAX[f]:
+                raise serializers.ValidationError({f: f'Valeur hors limites (0 à {QUALITY_MAX[f]}).'})
+        return self._validate_departure(data)
 
     def get_weight_gap_kg(self, obj):
         if obj.received_weight_kg is None:
@@ -83,8 +103,10 @@ class TransportSlipSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Cette usine ne reçoit pas les lots de la coopérative.")
         return plant
 
-    def validate(self, data):
+    def _validate_departure(self, data):
         if self.instance is None:
+            for f in (*QUALITY_FIELDS, 'decision', 'decision_reason'):      # saisis par l'usine à la réception
+                data.pop(f, None)
             if data.get('plant'):
                 data['destination'] = data['plant'].name           # la destination est l'usine choisie
             elif not (data.get('destination') or '').strip():

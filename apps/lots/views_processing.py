@@ -14,7 +14,7 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import ActivityLog
 from apps.accounts.permissions import IsCooperativeAdminOrPlant, module_required
-from . import processing as pr
+from . import plant_ops, processing as pr
 from .models import ProcessingOutput
 
 PERMS = [IsCooperativeAdminOrPlant, module_required('lots')]
@@ -38,7 +38,7 @@ def serialize(b):
 
 
 def _query(user):
-    return pr.visible_batches(user).select_related('created_by').prefetch_related(
+    return pr.visible_batches(user).select_related('created_by', 'plant_ref').prefetch_related(
         'cooperatives', 'inputs__lot', 'inputs__source_batch', 'outputs')
 
 
@@ -49,6 +49,9 @@ class ProcessingListView(APIView):
         return Response([serialize(b) for b in _query(request.user)[:500]])
 
     def post(self, request):
+        if plant_ops.is_operator(request.user):
+            return Response({'detail': "L'opérateur de pesée réceptionne les camions ; l'usinage est fait par le "
+                                       "responsable d'usine."}, status=status.HTTP_403_FORBIDDEN)
         d = request.data
         try:
             batch = pr.create_batch(request.user, d.get('operation', 'usinage'), (d.get('plant') or '').strip(),
@@ -57,7 +60,9 @@ class ProcessingListView(APIView):
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         ActivityLog.objects.create(user=request.user, action='create_processing', resource='processing',
                                    resource_id=str(batch.id), details=batch.code)
-        return Response(serialize(_query(request.user).get(pk=batch.pk)), status=status.HTTP_201_CREATED)
+        batch = _query(request.user).get(pk=batch.pk)
+        plant_ops.notify_loss(batch, pr.balance(batch))
+        return Response(serialize(batch), status=status.HTTP_201_CREATED)
 
 
 class ProcessingAvailableView(APIView):
@@ -77,6 +82,8 @@ class ProcessingDetailView(APIView):
         return Response(serialize(b))
 
     def patch(self, request, pk):
+        if plant_ops.is_operator(request.user):
+            return Response({'detail': "Réservé au responsable d'usine."}, status=status.HTTP_403_FORBIDDEN)
         b = _query(request.user).filter(pk=pk).first()
         if b is None:
             return Response({'detail': "Lot d'usinage introuvable."}, status=status.HTTP_404_NOT_FOUND)

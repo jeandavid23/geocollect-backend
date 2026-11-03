@@ -7,7 +7,7 @@ from .models import Plant, ProcessingBatch
 from .tests import H, TraceBase
 
 
-class PlantTests(TraceBase):
+class PlantBase(TraceBase):
     def setUp(self):
         super().setUp()
         self.admin = User.objects.create_user(username='sa', password='x-123456789', role='super_admin')
@@ -37,6 +37,8 @@ class PlantTests(TraceBase):
         assert slip.status_code == 201, slip.content
         return lot, slip.json()
 
+
+class PlantTests(PlantBase):
     def test_compte_usine(self):
         self.assertEqual(self.factory_user.role, 'usine')
         self.assertEqual(self.factory_user.plant_id, self.plant.id)
@@ -61,7 +63,10 @@ class PlantTests(TraceBase):
         self.assertEqual(self.u.post('/api/v1/lots/transport/', {}, format='json', **H).status_code, 403)
 
     def test_usine_usine_les_lots_recus(self):
-        lot, _ = self.ship()
+        lot, slip = self.ship()
+        avail = self.u.get('/api/v1/lots/processing/available/', **H).json()
+        self.assertEqual(avail['lots'], [])                                      # en route : pas encore usinable
+        self.u.patch(f'/api/v1/lots/transport/{slip["id"]}/', {'received_weight_kg': 1006}, format='json', **H)
         avail = self.u.get('/api/v1/lots/processing/available/', **H).json()
         self.assertEqual([(a['code'], a['available_kg']) for a in avail['lots']], [(lot['code'], 1000.0)])
         r = self.u.post('/api/v1/lots/processing/', {'operation': 'usinage', 'process_date': '2026-11-20',

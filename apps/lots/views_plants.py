@@ -3,9 +3,12 @@ Usines — /api/v1/lots/plants/
   GET                    propriétaire : toutes ; super admin : les siennes ; coopérative : celles qu'elle livre ;
                          usine : la sienne
   POST                   super admin / propriétaire : {name, location, cooperatives: [ids]}
-  PATCH <id>/            {name, location, cooperatives, is_active}
-  POST  <id>/account/    crée un compte « usine » {username, full_name, email, phone} → mot de passe provisoire
+  PATCH <id>/            {name, location, cooperatives, is_active, traceability_mode, gap_alert_pct, loss_alert_pct}
+  POST  <id>/account/    crée un compte « usine » {username, full_name, email, phone, plant_role} → mot de passe provisoire
 """
+import uuid
+from decimal import Decimal, InvalidOperation
+
 from django.db import transaction
 from rest_framework import status
 from rest_framework.permissions import BasePermission
@@ -41,10 +44,12 @@ def visible_plants(user):
 
 def serialize(p, with_accounts=False):
     out = {'id': str(p.id), 'name': p.name, 'location': p.location, 'is_active': p.is_active,
+           'traceability_mode': p.traceability_mode, 'gap_alert_pct': float(p.gap_alert_pct),
+           'loss_alert_pct': float(p.loss_alert_pct),
            'cooperatives': [{'id': str(c.id), 'name': c.name} for c in p.cooperatives.all()]}
     if with_accounts:
-        out['accounts'] = [{'id': str(u.id), 'username': u.username, 'full_name': u.full_name, 'is_active': u.is_active}
-                           for u in p.accounts.all()]
+        out['accounts'] = [{'id': str(u.id), 'username': u.username, 'full_name': u.full_name, 'is_active': u.is_active,
+                            'plant_role': u.plant_role or 'responsable'} for u in p.accounts.all()]
     return out
 
 
@@ -53,6 +58,27 @@ def _coops(user, ids):
     ids = {str(i) for i in ids or []}
     found = list(managed_cooperatives(user).filter(id__in=ids))
     return found if len(found) == len(ids) else None
+
+
+ALERT_MAX_PCT = 50
+
+
+def _apply_settings(plant, data):
+    """Mode de traçabilité et seuils d'alerte ; renvoie un message d'erreur, ou None."""
+    if 'traceability_mode' in data:
+        if data['traceability_mode'] not in Plant.TRACE_MODES:
+            return 'Mode de traçabilité inconnu (bilan_masse ou segregue).'
+        plant.traceability_mode = data['traceability_mode']
+    for field in ('gap_alert_pct', 'loss_alert_pct'):
+        if field in data:
+            try:
+                value = Decimal(str(data[field]))
+            except (InvalidOperation, ValueError):
+                return "Seuil d'alerte invalide."
+            if not 0 < value <= ALERT_MAX_PCT:
+                return f"Le seuil d'alerte doit être compris entre 0 et {ALERT_MAX_PCT} %."
+            setattr(plant, field, value)
+    return None
 
 
 class PlantListView(APIView):
@@ -89,6 +115,9 @@ class PlantDetailView(APIView):
                 setattr(plant, field, (request.data[field] or '').strip())
         if 'is_active' in request.data:
             plant.is_active = bool(request.data['is_active'])
+        error = _apply_settings(plant, request.data)
+        if error:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
         if not plant.name:
             return Response({'detail': "Indiquez le nom de l'usine."}, status=status.HTTP_400_BAD_REQUEST)
         if 'cooperatives' in request.data:
@@ -119,12 +148,40 @@ class PlantAccountView(APIView):
         email = (request.data.get('email') or '').strip() or None
         if email and User.objects.filter(email__iexact=email).exists():
             return Response({'detail': 'Cette adresse e-mail est déjà utilisée.'}, status=status.HTTP_400_BAD_REQUEST)
+        plant_role = request.data.get('plant_role') or 'responsable'
+        if plant_role not in User.PLANT_ROLES:
+            return Response({'detail': "Rôle inconnu (responsable ou pesee)."}, status=status.HTTP_400_BAD_REQUEST)
         password = generate_password(12)
         user = User.objects.create_user(username=username, password=password, full_name=full_name, email=email,
-                                        phone=(request.data.get('phone') or '').strip(), role='usine', plant=plant)
+                                        phone=(request.data.get('phone') or '').strip(), role='usine', plant=plant,
+                                        plant_role=plant_role)
         user.must_change_password = True
         user.save(update_fields=['must_change_password'])
         ActivityLog.objects.create(user=request.user, action='create_plant_account', resource='user',
                                    resource_id=str(user.id), details=f'{username} — {plant.name}')
-        return Response({'id': str(user.id), 'username': username, 'full_name': full_name,
+        return Response({'id': str(user.id), 'username': username, 'full_name': full_name, 'plant_role': plant_role,
                          'temporary_password': password}, status=status.HTTP_201_CREATED)
+
+    def patch(self, request, pk):
+        """Change le rôle d'un compte de l'usine : {user, plant_role}."""
+        plant = visible_plants(request.user).filter(pk=pk).first()
+        if plant is None:
+            return Response({'detail': 'Usine introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+        account = plant.accounts.filter(pk=request.data.get('user')).first() if _is_uuid(request.data.get('user')) else None
+        if account is None:
+            return Response({'detail': "Compte introuvable dans cette usine."}, status=status.HTTP_404_NOT_FOUND)
+        if request.data.get('plant_role') not in User.PLANT_ROLES:
+            return Response({'detail': "Rôle inconnu (responsable ou pesee)."}, status=status.HTTP_400_BAD_REQUEST)
+        account.plant_role = request.data['plant_role']
+        account.save(update_fields=['plant_role'])
+        ActivityLog.objects.create(user=request.user, action='update_plant_account', resource='user',
+                                   resource_id=str(account.id), details=f'{account.username} — {account.plant_role}')
+        return Response({'id': str(account.id), 'plant_role': account.plant_role})
+
+
+def _is_uuid(value):
+    try:
+        uuid.UUID(str(value))
+        return True
+    except ValueError:
+        return False

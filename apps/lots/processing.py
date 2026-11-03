@@ -15,7 +15,7 @@ from django.db.models import Max, Sum
 from apps.cooperatives.models import Cooperative
 from apps.parcels.models import Parcel
 from apps.accounts.permissions import scope_to_cooperative
-from .models import Delivery, Lot, ProcessingBatch, ProcessingInput, ProcessingOutput, TransportSlip
+from .models import Delivery, Lot, ProcessingBatch, ProcessingInput, ProcessingOutput, ShipmentItem, TransportSlip
 
 PREFIX = {'usinage': 'USN', 'transformation': 'TRF'}
 LOSS_WARNING_PCT = 15.0           # perte au-delà de laquelle le bilan matière est signalé
@@ -49,20 +49,22 @@ def lot_available_kg(lots):
 
 
 def batch_available_kg(batches):
-    """Produits réutilisables d'un lot d'usinage (hors sous-produits) moins ce qui est déjà transformé."""
+    """Produits réutilisables d'un lot d'usinage (hors sous-produits) moins ce qui est déjà transformé ou expédié."""
     ids = [b.id for b in batches]
     made = dict(ProcessingOutput.objects.filter(batch_id__in=ids).exclude(product__in=ProcessingOutput.BYPRODUCTS)
                 .values('batch_id').annotate(m=Sum('weight_kg')).values_list('batch_id', 'm'))
     used = dict(ProcessingInput.objects.filter(source_batch_id__in=ids).values('source_batch_id')
                 .annotate(u=Sum('weight_kg')).values_list('source_batch_id', 'u'))
-    return {i: (made.get(i) or Decimal(0), used.get(i) or Decimal(0)) for i in ids}
+    sent = dict(ShipmentItem.objects.filter(batch_id__in=ids).values('batch_id').annotate(s=Sum('weight_kg'))
+                .values_list('batch_id', 's'))
+    return {i: (made.get(i) or Decimal(0), (used.get(i) or Decimal(0)) + (sent.get(i) or Decimal(0))) for i in ids}
 
 
 def usable_lots(user):
-    """Lots qu'un utilisateur peut usiner : ceux adressés à son usine (compte usine), sinon ceux de ses coopératives."""
+    """Lots qu'un utilisateur peut usiner : ceux reçus par son usine (compte usine), sinon ceux de ses coopératives."""
     if user.role == 'usine':
         return Lot.objects.filter(transport_slips__plant_id=user.plant_id,
-                                  transport_slips__status__in=('emise', 'livree')).distinct()
+                                  transport_slips__status='livree').distinct()   # reçu (pesé, accepté)
     return scope_to_cooperative(Lot.objects.all(), user)
 
 
@@ -136,6 +138,17 @@ def create_batch(user, operation, plant, process_date, inputs, outputs, notes=''
     if not inputs or not outputs:
         raise ProcessingError('Indiquez au moins une entrée et un produit obtenu.')
     checked = _check_inputs(user, inputs)
+    if plant_ref is not None and plant_ref.traceability_mode == 'segregue':
+        from .plant_ops import verified_lots
+        ok = verified_lots([lot.id for lot, _, _ in checked if lot])
+        bad = [lot.code for lot, _, _ in checked if lot and lot.id not in ok]
+        bad += [b.code for _, b, _ in checked if b and (b.compliant_kg is None or
+                                                         b.compliant_kg < sum(i.weight_kg for i in b.inputs.all()))]
+        if bad:
+            raise ProcessingError(f"Usine en mode ségrégé : {', '.join(bad)} contient du cacao d'origine non vérifiée "
+                                  '(parcelle non conforme, en attente de validation ou absente).')
+    from .plant_ops import compliant_kg
+    verified = compliant_kg(checked)
     total_in = sum(w for _, _, w in checked)
     total_out = sum(Decimal(str(o.get('weight_kg') or 0)) for o in outputs)
     if any(Decimal(str(o.get('weight_kg') or 0)) <= 0 or o.get('product') not in ProcessingOutput.PRODUCTS for o in outputs):
@@ -149,7 +162,7 @@ def create_batch(user, operation, plant, process_date, inputs, outputs, notes=''
             with transaction.atomic():
                 batch = ProcessingBatch.objects.create(code=_next_code(operation, str(process_date)[:4]), operation=operation,
                                                        plant=plant, plant_ref=plant_ref, process_date=process_date,
-                                                       notes=notes, created_by=user)
+                                                       notes=notes, created_by=user, compliant_kg=verified)
                 batch.cooperatives.set(coops)
                 ProcessingInput.objects.bulk_create([ProcessingInput(batch=batch, lot=lot, source_batch=b, weight_kg=w)
                                                      for lot, b, w in checked])
@@ -168,22 +181,31 @@ def balance(batch):
     total_out = float(sum(o.weight_kg for o in batch.outputs.all()))
     loss = total_in - total_out
     pct = round(100 * loss / total_in, 1) if total_in else 0.0
+    limit = float(batch.plant_ref.loss_alert_pct) if batch.plant_ref_id else LOSS_WARNING_PCT
+    verified = (round(100 * float(batch.compliant_kg) / total_in, 1)
+                if batch.compliant_kg is not None and total_in else None)
     return {'input_kg': round(total_in, 1), 'output_kg': round(total_out, 1), 'loss_kg': round(loss, 1), 'loss_pct': pct,
-            'loss_warning': pct > LOSS_WARNING_PCT}
+            'loss_warning': pct > limit, 'compliant_share_pct': verified}
 
 
 # ── Remontée et suivi aval ─────────────────────────────────────────────────────────────────────────────
 
 def trace(batch):
     """Toute la chaîne en amont d'un lot d'usinage : lots d'usinage, lots, transport, pesées, producteurs, parcelles."""
-    batches, frontier, lot_ids = [batch], [batch.id], set()
+    return trace_many([batch])
+
+
+def trace_many(start):
+    """Chaîne en amont de plusieurs lots d'usinage (une expédition), sans doublon."""
+    batches, frontier, lot_ids = list(start), [b.id for b in start], set()
     for _ in range(MAX_DEPTH):
         rows = list(ProcessingInput.objects.filter(batch_id__in=frontier).values('lot_id', 'source_batch_id'))
         lot_ids |= {r['lot_id'] for r in rows if r['lot_id']}
         frontier = [r['source_batch_id'] for r in rows if r['source_batch_id']]
         if not frontier:
             break
-        batches += list(ProcessingBatch.objects.filter(id__in=frontier))
+        known = {b.id for b in batches}
+        batches += list(ProcessingBatch.objects.filter(id__in=frontier).exclude(id__in=known))
     lots = list(Lot.objects.filter(id__in=lot_ids).select_related('cooperative'))
     lines = list(Lot.objects.filter(id__in=lot_ids).values('lines__producer_id', 'lines__producer__last_name',
                                                            'lines__producer__first_name', 'lines__producer__field_id_base',
