@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Agent, Producer
+from .production import from_extra, to_kg
 from .serializers import AgentSerializer, AgentCreateSerializer, ProducerSerializer, ProducerCreateSerializer
 from apps.accounts.permissions import IsSuperAdmin, IsCooperativeOrAdmin, IsAgentOrAbove, resolve_cooperative, scope_to_cooperative, is_owner
 from utils.field_id import generate_field_id_base, get_next_producer_index
@@ -187,6 +188,11 @@ class ProducerBulkImportView(APIView):
             n = self._decimal(row['total_area_ha'])
             if n is not None:
                 data['total_area_ha'] = n
+        extra = row.get('extra_data') if isinstance(row.get('extra_data'), dict) else {}
+        estimate = to_kg(row.get('estimated_production_kg')) if row.get('estimated_production_kg') not in (None, '') \
+            else from_extra(extra)
+        if estimate is not None:
+            data['estimated_production_kg'] = estimate
         data['gender'] = 'F' if str(row.get('gender', '')).upper().startswith('F') else 'M'
         if row.get('owner_gender') in ('M', 'F'):
             data['owner_gender'] = row['owner_gender']

@@ -94,13 +94,35 @@ def volumes_block(ids, campaign):
     delivering = list(qs.values_list('producer_id', flat=True).distinct())
     areas = tr._areas(None, delivering) if delivering else {}
     area = sum(a for a, _ in areas.values())
+    estimate = estimate_block(ids, qs)
     return {
         'campaign': campaign, 'net_kg': round(net, 1), 'deliveries': r['n'] or 0, 'producers_delivering': producers,
         'amount_fcfa': _f(r['paid'], 0), 'avg_price': round(float(r['paid'] or 0) / float(r['priced']), 0) if r['priced'] else None,
         'kg_per_producer': round(net / producers, 1) if producers else 0, 'yield_kg_ha': round(net / area) if area else None,
         'previous_campaign': previous_campaign(campaign), 'previous_net_kg': _f(prev),
         'growth_pct': round(100 * (net - float(prev)) / float(prev), 1) if prev else None,
+        **estimate,
     }, qs
+
+
+def estimate_block(ids, deliveries):
+    """
+    Production estimée du registre (« Total estimate production (current year) ») : total de la coopérative,
+    rendement estimé (kg/ha) et part déjà livrée par les producteurs qui ont une estimation.
+    """
+    rows = list(Producer.objects.filter(cooperative_id__in=ids, estimated_production_kg__isnull=False)
+                .values_list('id', 'estimated_production_kg'))
+    if not rows:
+        return {'estimated_kg': None, 'producers_with_estimate': 0, 'estimated_yield_kg_ha': None, 'realisation_pct': None}
+    est = {pid: float(kg) for pid, kg in rows}
+    areas = tr._areas(None, list(est))
+    with_area = [pid for pid in est if areas[pid][0]]
+    area = sum(areas[pid][0] for pid in with_area)
+    delivered = deliveries.filter(producer__estimated_production_kg__isnull=False).aggregate(n=Sum('net_kg'))['n']
+    total = sum(est.values())
+    return {'estimated_kg': round(total, 1), 'producers_with_estimate': len(est),
+            'estimated_yield_kg_ha': round(sum(est[p] for p in with_area) / area) if area else None,
+            'realisation_pct': round(100 * float(delivered or 0) / total, 1) if total else None}
 
 
 def monthly_block(qs):

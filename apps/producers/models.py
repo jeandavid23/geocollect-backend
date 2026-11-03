@@ -59,6 +59,9 @@ class Producer(models.Model):
     region = models.CharField(max_length=100, verbose_name="Région d'inspection interne")
     # 6. Superficie totale de l'exploitation (ha)
     total_area_ha = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='Superficie totale (ha)')
+    # « Total estimate production (current year) » du registre : capacité de référence des livraisons (kg)
+    estimated_production_kg = models.DecimalField(max_digits=12, decimal_places=1, null=True, blank=True,
+                                                  verbose_name='Production totale estimée, année en cours (kg)')
     # 7. Type d'exploitation (petite/grande)
     farm_type = models.CharField(max_length=10, choices=FarmType.choices, default=FarmType.SMALL, verbose_name="Type d'exploitation")
     # 8. Nombre d'unités agricoles

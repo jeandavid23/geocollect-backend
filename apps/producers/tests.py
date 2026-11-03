@@ -170,3 +170,19 @@ class TrashTests(PurgeTests):
         Trash.objects.update(expires_at=timezone.now() - timedelta(seconds=1))
         purge_expired()
         self.assertEqual(Trash.objects.count(), 0)
+
+
+class EstimatedProductionTests(TestCase):
+    """« Total estimate production (current year) » du registre : lue à l'import, référence des volumes livrés."""
+
+    def test_lecture_de_la_colonne_du_registre(self):
+        from .production import from_extra, to_kg
+        self.assertEqual(from_extra({'Total estimate production (current year)': '1 250,5'}), 1250.5)
+        self.assertEqual(from_extra({'Total estimate production (previous year)': 900,
+                                     'Total estimate production (current year)': 1100}), 1100)
+        self.assertEqual(from_extra({'Production estimée (tonnes)': '1,2'}), 1200.0)
+        self.assertEqual(from_extra({'Estimated production': 'n/a', 'Production estimée (kg)': 800}), 800)
+        self.assertIsNone(from_extra({'Superficie': 3}))
+        self.assertEqual(to_kg('2.500.000'), 2500000.0)
+        self.assertEqual(to_kg('1.250,5'), 1250.5)
+        self.assertEqual(to_kg('1,250.5'), 1250.5)

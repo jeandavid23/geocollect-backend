@@ -21,6 +21,9 @@ from .models import Delivery, LotLine, TransportSlip
 YIELD_WATCH = {'cacao': 1000, 'cafe': 1800, 'autre': 10 ** 9}
 YIELD_MAX = {'cacao': 1500, 'cafe': 2500, 'autre': 10 ** 9}
 DEFAULT_TARE_PER_BAG_KG = Decimal('1.0')          # sac de jute vide ≈ 1 kg
+# Production estimée du registre (« Total estimate production (current year) ») : au-delà, à surveiller ;
+# au-delà de la tolérance, dépassement (risque de mélange avec un cacao d'une autre origine).
+ESTIMATE_TOLERANCE = 0.10
 NUMBER_ATTEMPTS = 5
 
 
@@ -130,6 +133,17 @@ def _areas(coop, producer_ids):
     return out
 
 
+def capacity(net, area, estimate, product):
+    """(statut, rendement réel kg/ha, capacité kg, source) : production estimée du registre, sinon surface × rendement."""
+    y = net / area if area else None
+    if estimate:
+        status = ('depassement' if net > estimate * (1 + ESTIMATE_TOLERANCE)
+                  else 'a_surveiller' if net > estimate else 'ok')
+        return status, y, estimate, 'registre'
+    status, y = _status(net, area, product)
+    return status, y, (area * YIELD_MAX.get(product, 0) if area else None), 'surface'
+
+
 def _status(net, area, product):
     if not area:
         return 'sans_surface', None
@@ -149,14 +163,15 @@ def volumes(coop, campaign, product='cacao'):
         in_lots=Sum('net_kg', filter=Q(lot__isnull=False)), amount=Sum('amount')))
     pids = [r['producer_id'] for r in rows]
     names = {p['id']: p for p in Producer.objects.filter(id__in=pids)
-             .values('id', 'last_name', 'first_name', 'field_id_base', 'village')}
+             .values('id', 'last_name', 'first_name', 'field_id_base', 'village', 'estimated_production_kg')}
     areas = _areas(coop, pids)
     out = []
     for r in rows:
         p = names[r['producer_id']]
         area, source = areas[r['producer_id']]
         net = float(r['net'] or 0)
-        status, y = _status(net, area, product)
+        estimate = float(p['estimated_production_kg']) if p['estimated_production_kg'] else None
+        status, y, cap, cap_source = capacity(net, area, estimate, product)
         in_lots = float(r['in_lots'] or 0)
         out.append({
             'producer': str(r['producer_id']), 'code': p['field_id_base'], 'village': p['village'],
@@ -164,12 +179,15 @@ def volumes(coop, campaign, product='cacao'):
             'deliveries': r['n'], 'bags': r['bags'] or 0, 'net_kg': round(net, 1), 'in_lots_kg': round(in_lots, 1),
             'not_in_lot_kg': round(net - in_lots, 1), 'amount': float(r['amount'] or 0), 'last_delivery': r['last'],
             'area_ha': round(area, 2), 'area_source': source, 'yield_kg_ha': round(y) if y is not None else None,
-            'capacity_kg': round(area * YIELD_MAX.get(product, 0)) if area else None, 'status': status,
+            'capacity_kg': round(cap) if cap else None, 'capacity_source': cap_source, 'estimated_kg': estimate,
+            'estimated_yield_kg_ha': round(estimate / area) if estimate and area else None,
+            'realisation_pct': round(100 * net / estimate, 1) if estimate else None, 'status': status,
         })
     out.sort(key=lambda x: -x['net_kg'])
     return {
         'campaign': campaign, 'product': product,
-        'thresholds': {'watch_kg_ha': YIELD_WATCH.get(product), 'max_kg_ha': YIELD_MAX.get(product)},
+        'thresholds': {'watch_kg_ha': YIELD_WATCH.get(product), 'max_kg_ha': YIELD_MAX.get(product),
+                       'estimate_tolerance_pct': round(100 * ESTIMATE_TOLERANCE)},
         'producers': out,
         'totals': {'producers': len(out), 'deliveries': sum(x['deliveries'] for x in out),
                    'net_kg': round(sum(x['net_kg'] for x in out), 1),
@@ -178,5 +196,7 @@ def volumes(coop, campaign, product='cacao'):
                    'amount': sum(x['amount'] for x in out),
                    'producers_over_capacity': sum(1 for x in out if x['status'] == 'depassement'),
                    'producers_to_watch': sum(1 for x in out if x['status'] == 'a_surveiller'),
-                   'producers_without_area': sum(1 for x in out if x['status'] == 'sans_surface')},
+                   'producers_without_area': sum(1 for x in out if x['status'] == 'sans_surface'),
+                   'producers_with_estimate': sum(1 for x in out if x['estimated_kg']),
+                   'estimated_kg': round(sum(x['estimated_kg'] or 0 for x in out), 1)},
     }

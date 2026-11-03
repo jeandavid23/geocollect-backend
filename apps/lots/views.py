@@ -61,9 +61,16 @@ def checks(lot):
             issues.append({'level': 'bloquant', 'producer': name, 'message': f'Parcelle(s) non conforme(s) EUDR : {", ".join(bad)}.'})
         if pending:
             issues.append({'level': 'attention', 'producer': name, 'message': f'Parcelle(s) en attente de validation : {", ".join(pending)}.'})
-        season = campaign_kg.get(pid, 0.0)
+        season = max(campaign_kg.get(pid, 0.0), weight[pid])
         season_yield = season / area if area else None
-        if season_yield is not None and season > weight[pid] and season_yield > MAX_YIELD.get(lot.product, 10 ** 9):
+        estimate = float(line.producer.estimated_production_kg or 0)
+        if estimate:                                       # production estimée du registre : la référence
+            if season > estimate * (1 + tr.ESTIMATE_TOLERANCE):
+                issues.append({'level': 'attention', 'producer': name,
+                               'message': f'Volume livré sur la campagne {lot.campaign} : {season:,.0f} kg, au-delà de la production '
+                                          f'estimée du registre ({estimate:,.0f} kg, tolérance {tr.ESTIMATE_TOLERANCE:.0%}) : risque '
+                                          'de mélange avec un autre cacao.'.replace(',', ' ')})
+        elif season_yield is not None and season > weight[pid] and season_yield > MAX_YIELD.get(lot.product, 10 ** 9):
             issues.append({'level': 'attention', 'producer': name,
                            'message': f'Volume livré sur la campagne {lot.campaign} : {season:,.0f} kg, soit {season_yield:,.0f} '
                                       f'kg/ha sur {area:.2f} ha (au-delà de {MAX_YIELD[lot.product]:,} kg/ha : risque de '
@@ -73,6 +80,7 @@ def checks(lot):
                            'message': f'Rendement anormal : {yld:,.0f} kg/ha déclarés sur {area:.2f} ha (risque de mélange avec un autre cacao).'.replace(',', ' ')})
         producers.append({'producer': str(pid), 'name': name, 'code': line.producer.field_id_base, 'weight_kg': round(weight[pid], 1),
                           'parcels': len(ps), 'area_ha': round(area, 2), 'yield_kg_ha': round(yld) if yld else None,
+                          'estimated_kg': estimate or None,
                           'status': 'bloquant' if (not ps or bad) else 'attention' if pending else 'ok'})
     net = sum(weight.values())
     if lot.gross_weight_kg and abs(float(lot.gross_weight_kg) - net) > max(1.0, 0.02 * net):

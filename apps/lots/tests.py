@@ -230,3 +230,38 @@ class TraceabilityTests(TraceBase):
         self.assertEqual(c['parcels'][0]['eudr_status'], 'ancien')
         self.assertEqual(c['total_area_ha'], 3.0)
         self.assertEqual(c['producers'][0]['yield_kg_ha'], 333)
+
+
+class EstimatedCapacityTests(TraceBase):
+    """La production estimée du registre est la capacité de référence du producteur (volumes, contrôles de lot)."""
+
+    def test_import_du_registre(self):
+        r = self.c.post('/api/v1/producers/bulk/', {'use_codes': True, 'producers': [
+            {'code': 'P9', 'last_name': 'N', 'extra_data': {'Total estimate production (current year)': '1 800'}}]},
+            format='json', **H)
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(float(Producer.objects.get(field_id_base='P9').estimated_production_kg), 1800.0)
+        self.c.post('/api/v1/producers/bulk/', {'use_codes': True, 'producers': [               # réimport : mise à jour
+            {'code': 'P9', 'extra_data': {'Total estimate production (current year)': 2100}}]}, format='json', **H)
+        self.assertEqual(float(Producer.objects.get(field_id_base='P9').estimated_production_kg), 2100.0)
+
+    def test_volumes_compares_a_l_estimation(self):
+        Producer.objects.filter(pk=self.p1.pk).update(estimated_production_kg=900)
+        Producer.objects.filter(pk=self.p2.pk).update(estimated_production_kg=2000)
+        self.weigh(self.p1, gross=960, bags=10)                     # 950 kg net : > 900, < 990 → à surveiller
+        self.weigh(self.p2, gross=1010, bags=10)                    # 1000 kg : 50 % de l'estimation
+        v = self.c.get('/api/v1/lots/volumes/?campaign=2026-2027', **H).json()
+        rows = {p['code']: p for p in v['producers']}
+        self.assertEqual((rows['P1']['status'], rows['P1']['capacity_source'], rows['P1']['capacity_kg']), ('a_surveiller', 'registre', 900))
+        self.assertEqual(rows['P1']['estimated_yield_kg_ha'], 450)                 # 900 kg sur 2 ha
+        self.assertEqual((rows['P2']['status'], rows['P2']['realisation_pct']), ('ok', 50.0))
+        self.weigh(self.p1, gross=60, bags=1)                       # 1 009 kg : > 990 → dépassement
+        rows = {p['code']: p for p in self.c.get('/api/v1/lots/volumes/?campaign=2026-2027', **H).json()['producers']}
+        self.assertEqual(rows['P1']['status'], 'depassement')
+
+    def test_controle_du_lot_signale_le_depassement(self):
+        Producer.objects.filter(pk=self.p1.pk).update(estimated_production_kg=500)
+        d = self.weigh(self.p1, gross=1010, bags=10).json()
+        lot = self.lot_from([d['id']]).json()
+        msgs = [i['message'] for i in lot['checks']['issues']]
+        self.assertTrue(any('production estimée du registre' in m for m in msgs), msgs)

@@ -110,3 +110,12 @@ class AnalyticsTests(TestCase):
         sa = APIClient()
         sa.force_authenticate(self.admin)
         self.assertEqual(sa.get(URL + '&cooperative=pas-un-uuid', **H).status_code, 400)
+
+    def test_production_estimee_du_registre(self):
+        Producer.objects.filter(pk=self.p1.pk).update(estimated_production_kg=2000)     # 2 ha cartographiés
+        Producer.objects.filter(pk=self.p2.pk).update(estimated_production_kg=3000)     # 4 ha (anciens polygones)
+        self.weigh(self.p1, 1010)
+        v = self.c.get(URL, **H).json()['volumes']
+        self.assertEqual((v['estimated_kg'], v['producers_with_estimate']), (5000.0, 2))
+        self.assertEqual(v['estimated_yield_kg_ha'], 833)                              # 5 000 kg / 6 ha
+        self.assertEqual(v['realisation_pct'], 20.0)                                   # 1 000 / 5 000
