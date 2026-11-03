@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 from apps.accounts.models import ActivityLog
 from apps.accounts.permissions import IsCooperativeAdminOrPlant, module_required
 from . import plant_ops, processing as pr
+from .views_trace import pr_uuid
 from .models import ProcessingOutput
 
 PERMS = [IsCooperativeAdminOrPlant, module_required('lots')]
@@ -46,7 +47,11 @@ class ProcessingListView(APIView):
     permission_classes = PERMS
 
     def get(self, request):
-        return Response([serialize(b) for b in _query(request.user)[:500]])
+        qs = _query(request.user)
+        if request.query_params.get('plant'):
+            plant = pr_uuid(request.query_params['plant'])
+            qs = qs.filter(plant_ref_id=plant) if plant else qs.none()
+        return Response([serialize(b) for b in qs[:500]])
 
     def post(self, request):
         if plant_ops.is_operator(request.user):

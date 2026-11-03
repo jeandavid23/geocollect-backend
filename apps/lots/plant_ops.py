@@ -127,13 +127,34 @@ def notify_loss(batch, info):
                              f'(seuil {float(batch.plant_ref.loss_alert_pct):g} %).')
 
 
+# ── Périmètre ────────────────────────────────────────────────────────────────────────────────────────
+
+def scope(plant, user=None):
+    """
+    (fiches, lots d'usinage, expéditions) de l'usine visibles par l'utilisateur. Usine, super admin, propriétaire :
+    tout. Coopérative : ses fiches, les lots d'usinage faits uniquement de ses lots, et les expéditions qui n'en
+    contiennent pas d'autres (jamais les données d'une autre coopérative).
+    """
+    slips = TransportSlip.objects.filter(plant=plant)
+    batches = ProcessingBatch.objects.filter(plant_ref=plant)
+    shipments = Shipment.objects.filter(plant=plant)
+    if user is not None and user.role == 'cooperative':
+        from .processing import visible_batches
+        slips = slips.filter(cooperative_id=user.cooperative_id)
+        batches = visible_batches(user).filter(plant_ref=plant)
+        hidden = ProcessingBatch.objects.filter(plant_ref=plant).exclude(id__in=batches.values('id'))
+        shipments = shipments.filter(items__batch__in=batches.values('id')).exclude(items__batch__in=hidden).distinct()
+    return slips, batches, shipments
+
+
 # ── Stock ────────────────────────────────────────────────────────────────────────────────────────────────
 
-def stock(plant, today=None):
+def stock(plant, user=None, today=None):
     """En route, cacao reçu non usiné, produits finis non expédiés, avec l'ancienneté en magasin."""
     from .processing import batch_available_kg, lot_available_kg
     today = today or timezone.now().date()
-    slips = list(TransportSlip.objects.filter(plant=plant).exclude(status__in=('annulee', 'refusee'))
+    slip_qs, batch_qs, _ = scope(plant, user)
+    slips = list(slip_qs.exclude(status__in=('annulee', 'refusee'))
                  .select_related('lot', 'cooperative').order_by('issued_at'))
     on_way = [s for s in slips if s.status == 'emise']
     received = {}
@@ -146,10 +167,10 @@ def stock(plant, today=None):
             'received_at': s.received_at, 'days': (today - s.received_at.date()).days if s.received_at else None,
             'available_kg': float(lot_stock[s.lot_id][0] - lot_stock[s.lot_id][1])}
            for s in received.values() if lot_stock[s.lot_id][0] > lot_stock[s.lot_id][1]]
-    batches = list(ProcessingBatch.objects.filter(plant_ref=plant))
+    batches = list(batch_qs)
     b_stock = batch_available_kg(batches)
     products = {}
-    for o in (ProcessingBatch.objects.filter(plant_ref=plant).exclude(outputs__product__in=ProcessingOutput.BYPRODUCTS)
+    for o in (ProcessingBatch.objects.filter(id__in=[b.id for b in batches]).exclude(outputs__product__in=ProcessingOutput.BYPRODUCTS)
               .values('id', 'outputs__product')
               .annotate(w=Sum('outputs__weight_kg'))):
         products.setdefault(o['id'], []).append(o['outputs__product'])
@@ -179,10 +200,11 @@ def _months_before(first_day, n):
     return first_day.replace(year=index // 12, month=index % 12 + 1)
 
 
-def dashboard(plant, today=None):
+def dashboard(plant, user=None, today=None):
     today = today or timezone.now().date()
     start = _months_before(today.replace(day=1), DASHBOARD_MONTHS - 1)
-    slips = TransportSlip.objects.filter(plant=plant, issued_at__date__gte=start)
+    slip_qs, batch_qs, ship_qs = scope(plant, user)
+    slips = slip_qs.filter(issued_at__date__gte=start)
     done = slips.filter(status__in=('livree', 'refusee'))
     limit = float(plant.gap_alert_pct)
     gap = (F('received_weight_kg') - F('gross_weight_kg')) * 100 / F('gross_weight_kg')
@@ -195,18 +217,18 @@ def dashboard(plant, today=None):
                 .values('m').annotate(kg=Sum('received_weight_kg'), n=Count('id'))}
     by_coop = list(done.filter(status='livree').values('cooperative__name')
                    .annotate(kg=Sum('received_weight_kg'), n=Count('id')).order_by('-kg'))
-    batches = ProcessingBatch.objects.filter(plant_ref=plant, process_date__gte=start)
+    batches = batch_qs.filter(process_date__gte=start)
     ops = {}
     for op in ('usinage', 'transformation'):
-        sub = batches.filter(operation=op)
+        sub = ProcessingBatch.objects.filter(id__in=batches.filter(operation=op).values('id'))   # sans DISTINCT (sommes)
         i = ProcessingInput.objects.filter(batch__in=sub).aggregate(t=Sum('weight_kg'))['t'] or 0
         o = sub.aggregate(t=Sum('outputs__weight_kg'))['t'] or 0
         ops[op] = {'batches': sub.count(), 'input_kg': float(i), 'output_kg': float(o),
                    'loss_pct': round(100 * float(i - o) / float(i), 1) if i else None}
-    shipped = ShipmentItem.objects.filter(shipment__plant=plant, shipment__ship_date__gte=start)
+    shipped = ShipmentItem.objects.filter(shipment__in=ship_qs.filter(ship_date__gte=start).values('id'), batch__in=batch_qs.values('id'))
     ship_month = {_month(r['m']): float(r['kg']) for r in shipped.filter(shipment__status='expediee')
                   .annotate(m=TruncMonth('shipment__ship_date')).values('m').annotate(kg=Sum('weight_kg'))}
-    shipments = Shipment.objects.filter(plant=plant, ship_date__gte=start).aggregate(
+    shipments = Shipment.objects.filter(id__in=ship_qs.filter(ship_date__gte=start).values('id')).aggregate(
         n=Count('id'), sent=Count('id', filter=Q(status='expediee')),
         dds=Count('id', filter=~Q(dds_reference='')))
     months, m = [], start

@@ -6,7 +6,8 @@ Opérations d'une usine — /api/v1/lots/plant/
   shipments/shippable/       GET : produits finis disponibles à l'expédition
   shipments/<id>/            GET / PATCH (documents, {"status": "expediee"} avec référence DDS obligatoire)
   shipments/<id>/trace/      GET : chaîne complète jusqu'aux producteurs et parcelles
-Compte usine : son usine. Super admin / propriétaire : ?plant=<id> (une de leurs usines).
+Compte usine : son usine. Super admin / propriétaire / coopérative : ?plant=<id> (une usine visible), en lecture ;
+la coopérative n'y voit que ce qui concerne ses propres lots (voir plant_ops.scope).
 """
 from rest_framework import status
 from rest_framework.response import Response
@@ -21,12 +22,10 @@ PERMS = [IsCooperativeAdminOrPlant, module_required('lots')]
 
 
 def _plant(request):
-    """L'usine concernée : celle du compte usine, sinon ?plant= parmi les usines visibles d'un administrateur."""
+    """L'usine concernée : celle du compte usine, sinon ?plant= parmi les usines visibles (administrateur, coopérative)."""
     user = request.user
     if user.role == 'usine':
         return user.plant
-    if user.role not in ('owner', 'super_admin'):
-        return None
     body = request.data if isinstance(request.data, dict) else {}
     pid = request.query_params.get('plant') or body.get('plant')
     return visible_plants(user).filter(pk=pid).first() if pid and _uuid_ok(pid) else None
@@ -45,7 +44,8 @@ def _no_plant():
 
 
 def _manager_only(request):
-    if plant_ops.is_operator(request.user):
+    """Expéditions : saisies par le responsable d'usine (ou le super admin) ; consultation pour les autres."""
+    if plant_ops.is_operator(request.user) or request.user.role == 'cooperative':
         return Response({'detail': "Réservé au responsable d'usine."}, status=status.HTTP_403_FORBIDDEN)
     return None
 
@@ -55,7 +55,7 @@ class PlantStockView(APIView):
 
     def get(self, request):
         plant = _plant(request)
-        return Response(plant_ops.stock(plant)) if plant else _no_plant()
+        return Response(plant_ops.stock(plant, request.user)) if plant else _no_plant()
 
 
 class PlantDashboardView(APIView):
@@ -63,7 +63,7 @@ class PlantDashboardView(APIView):
 
     def get(self, request):
         plant = _plant(request)
-        return Response(plant_ops.dashboard(plant)) if plant else _no_plant()
+        return Response(plant_ops.dashboard(plant, request.user)) if plant else _no_plant()
 
 
 def _shipments(request):
@@ -99,6 +99,9 @@ class ShippableView(APIView):
     permission_classes = PERMS
 
     def get(self, request):
+        denied = _manager_only(request)
+        if denied:
+            return denied
         plant = _plant(request)
         return Response(sh.shippable(plant)) if plant else _no_plant()
 

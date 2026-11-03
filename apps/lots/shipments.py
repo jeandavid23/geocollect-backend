@@ -25,6 +25,14 @@ def visible_shipments(user):
         return Shipment.objects.all()
     if user.role == 'super_admin':
         return Shipment.objects.filter(plant__managed_by=user)
+    if user.role == 'cooperative' and user.cooperative_id:
+        # expéditions des usines qui la servent, faites uniquement de ses lots
+        from .plant_ops import scope
+        from .views_plants import visible_plants
+        ids = set()
+        for plant in visible_plants(user):
+            ids |= set(scope(plant, user)[2].values_list('id', flat=True))
+        return Shipment.objects.filter(id__in=ids)
     return Shipment.objects.none()
 
 

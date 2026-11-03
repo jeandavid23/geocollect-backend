@@ -8,6 +8,8 @@ Traçabilité des volumes — /api/v1/lots/
   transport/<id>/            GET / PATCH (réception : poids à l'arrivée ; ou {"status": "annulee", "notes": motif})
 Coopérative : la sienne ; super admin et propriétaire : ?cooperative= (comme les lots).
 """
+import uuid
+
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -26,6 +28,14 @@ from .serializers_trace import QUALITY_FIELDS, DeliverySerializer, TransportSlip
 PERMS = [IsCooperativeOrAdmin, module_required('lots')]
 SLIP_PERMS = [IsCooperativeAdminOrPlant, module_required('lots')]     # l'usine reçoit les fiches qui lui sont adressées
 RECEPTION_FIELDS = {'received_weight_kg', 'received_by', 'reception_notes', 'decision', 'decision_reason', *QUALITY_FIELDS}
+
+
+def pr_uuid(value):
+    """Identifiant valide, ou None (un filtre mal formé ne doit pas provoquer d'erreur 500)."""
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return None
 
 
 def _missing_coop():
@@ -135,6 +145,9 @@ class TransportListView(APIView):
             qs = qs.filter(lot_id=request.query_params['lot'])
         if request.query_params.get('cooperative'):
             qs = qs.filter(cooperative_id=request.query_params['cooperative'])
+        if request.query_params.get('plant'):
+            plant = pr_uuid(request.query_params['plant'])
+            qs = qs.filter(plant_id=plant) if plant else qs.none()
         return Response(TransportSlipSerializer(qs[:500], many=True).data)
 
     def post(self, request):

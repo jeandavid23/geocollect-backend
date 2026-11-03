@@ -179,7 +179,7 @@ class PlantOpsTests(PlantBase):
                                 'outputs': [{'product': 'masse', 'weight_kg': 80}]}, format='json', **H)
         self.assertEqual(r.status_code, 400)
         self.assertEqual(self.sa.get(SHIP, **H).json()[0]['number'], ship['number'])
-        self.assertEqual(self.c.get(SHIP, **H).json(), [])
+        self.assertEqual([x['number'] for x in self.c.get(SHIP, **H).json()], [ship['number']])     # la coopérative la voit
 
     def test_tableau_de_bord(self):
         lot, _ = self.received_lot()
@@ -218,3 +218,65 @@ class PlantOpsTests(PlantBase):
         purge(self.admin)
         self.assertFalse(Plant.objects.exists())
         self.assertFalse(Shipment.objects.exists())
+
+
+class PlantVisibilityTests(PlantOpsTests.__bases__[0]):
+    """Propriétaire, super admin et coopérative voient les données de l'usine ; la coopérative, seulement les siennes."""
+
+    def setUp(self):
+        super().setUp()
+        from apps.parcels.models import Parcel as P
+        from .tests import SQ
+        self.other.managed_by = self.admin
+        self.other.save()
+        self.plant.cooperatives.add(self.other)
+        P.objects.create(producer=self.foreign, cooperative=self.other, field_id='X1-1', geometry=SQ, area_hectares=2,
+                         eudr_status='compliant')
+        self.other_user = User.objects.create_user(username='c2', password='x-123456789', role='cooperative', cooperative=self.other)
+        self.c2 = APIClient()
+        self.c2.force_authenticate(self.other_user)
+        self.owner = APIClient()
+        self.owner.force_authenticate(User.objects.create_user(username='own', password='x-123456789', role='owner'))
+
+    def ship_from(self, client, producer):
+        d = client.post('/api/v1/lots/deliveries/', {'producer': str(producer.id), 'delivery_date': '2026-11-02', 'campaign': '2026-2027',
+                                                      'product': 'cacao', 'bags': 10, 'gross_kg': 1010}, format='json', **H).json()
+        lot = client.post('/api/v1/lots/', {'campaign': '2026-2027', 'product': 'cacao', 'lot_date': '2026-11-03',
+                                            'deliveries': [d['id']]}, format='json', **H).json()
+        client.patch(f'/api/v1/lots/{lot["id"]}/', {'status': 'valide'}, format='json', **H)
+        slip = client.post('/api/v1/lots/transport/', {'lot': lot['id'], 'vehicle_plate': 'AB', 'driver_name': 'T', 'bags': 10,
+                                                      'gross_weight_kg': 1010, 'plant': str(self.plant.id)}, format='json', **H).json()
+        r = self.u.patch(SLIP.format(slip['id']), {'received_weight_kg': 1006}, format='json', **H)
+        assert r.status_code == 200, r.content
+        return lot
+
+    def test_chaque_role_voit_les_donnees_de_l_usine(self):
+        mine, theirs = self.ship_from(self.c, self.p1), self.ship_from(self.c2, self.foreign)
+        for lot in (mine, theirs):
+            b = self.u.post(BATCH, {'operation': 'usinage', 'process_date': '2026-11-20', 'inputs': [{'lot': lot['id'], 'weight_kg': 1000}],
+                                    'outputs': [{'product': 'feves_usinees', 'weight_kg': 980}]}, format='json', **H).json()
+            self.u.post(SHIP, {'ship_date': '2026-12-01', 'client': lot['code'], 'items': [
+                {'batch': b['id'], 'product': 'feves_usinees', 'weight_kg': 500}]}, format='json', **H)
+        q = f'?plant={self.plant.id}'
+        full = self.owner.get('/api/v1/lots/plant/dashboard/' + q, **H).json()
+        self.assertEqual(full['receptions']['received_kg'], 2012.0)
+        self.assertEqual(self.sa.get('/api/v1/lots/plant/dashboard/' + q, **H).json()['receptions'], full['receptions'])
+        self.assertEqual(len(self.owner.get(SHIP, **H).json()), 2)
+        # la coopérative : ses réceptions, son usinage, ses expéditions — rien de l'autre coopérative
+        d = self.c.get('/api/v1/lots/plant/dashboard/' + q, **H).json()
+        self.assertEqual((d['receptions']['received_kg'], [c['name'] for c in d['by_cooperative']]), (1006.0, ['Coop Akonan']))
+        self.assertEqual(d['processing']['usinage']['batches'], 1)
+        self.assertEqual(self.c.get('/api/v1/lots/plant/stock/' + q, **H).json()['totals']['finished_kg'], 480.0)
+        self.assertEqual([s['client'] for s in self.c.get(SHIP, **H).json()], [mine['code']])
+        self.assertEqual([s['lot_code'] for s in self.c.get('/api/v1/lots/transport/' + q, **H).json()], [mine['code']])
+        self.assertEqual(len(self.c.get(BATCH + q, **H).json()), 1)
+        self.assertEqual(len(self.sa.get(BATCH + q, **H).json()), 2)
+        # consultation seulement
+        self.assertEqual(self.c.post(SHIP, {'plant': str(self.plant.id)}, format='json', **H).status_code, 403)
+        self.assertEqual(self.c.get(SHIP + 'shippable/' + q, **H).status_code, 403)
+        self.assertEqual(self.c.get('/api/v1/lots/transport/?plant=xx', **H).json(), [])
+
+    def test_cooperative_hors_usine(self):
+        self.plant.cooperatives.remove(self.other)
+        r = self.c2.get(f'/api/v1/lots/plant/dashboard/?plant={self.plant.id}', **H)
+        self.assertEqual(r.status_code, 404)
