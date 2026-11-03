@@ -7,7 +7,7 @@ from rest_framework import permissions
 
 from apps.cooperatives.models import Cooperative
 from apps.producers.models import Producer, Agent
-from apps.parcels.models import Parcel
+from apps.parcels.models import LegacyParcel, Parcel
 from apps.accounts.permissions import IsAgentOrAbove, IsCooperativeOrAdmin, IsSuperAdmin, scope_to_cooperative, managed_cooperatives
 
 
@@ -69,6 +69,7 @@ class CoopDashboardView(APIView):
 
         today = timezone.now().date()
         parcels = Parcel.objects.filter(cooperative=coop)
+        legacy = LegacyParcel.objects.filter(cooperative=coop)
         producers = Producer.objects.filter(cooperative=coop)
         agents = Agent.objects.filter(cooperative=coop)
 
@@ -79,8 +80,6 @@ class CoopDashboardView(APIView):
             count=Count('id'),
             ha=Sum('area_hectares'),
         ).order_by('-count')[:10])
-
-        villages = list(parcels.values('village').distinct().count())
 
         daily = []
         for i in range(6, -1, -1):
@@ -97,8 +96,10 @@ class CoopDashboardView(APIView):
         return Response({
             'cooperative': {'id': str(coop.id), 'name': coop.name},
             'total_producers': producers.count(),
-            'total_parcels': parcels.count(),
-            'total_hectares': round(parcels.aggregate(t=Sum('area_hectares'))['t'] or 0, 2),
+            # parcelles cartographiées ET anciens polygones : toutes sont des parcelles de la coopérative
+            'total_parcels': parcels.count() + legacy.count(),
+            'total_hectares': round((parcels.aggregate(t=Sum('area_hectares'))['t'] or 0)
+                                    + (legacy.aggregate(t=Sum('area_hectares'))['t'] or 0), 2),
             'total_agents': agents.count(),
             'total_villages': parcels.values('village').distinct().count(),
             'total_sections': parcels.values('section').distinct().count(),
@@ -330,10 +331,45 @@ class CoopCompareView(APIView):
                 'managed_by': (c.managed_by.full_name or c.managed_by.username) if c.managed_by else None,
                 'producers': p['total'], 'mapped': p['mapped'], 'to_map': p['total'] - p['mapped'],
                 'mapped_pct': round(100 * p['mapped'] / p['total']) if p['total'] else 0,
-                'parcels': parcels.get(c.id, 0), 'non_compliant': non_conf.get(c.id, 0), 'legacy_polygons': legacy.get(c.id, 0),
+                'parcels': parcels.get(c.id, 0) + legacy.get(c.id, 0), 'mapped_parcels': parcels.get(c.id, 0), 'non_compliant': non_conf.get(c.id, 0), 'legacy_polygons': legacy.get(c.id, 0),
                 'agents': agents.get(c.id, 0), 'lots_ready': lots.get(c.id, 0),
                 'overlaps': (ov.get('autres_producteurs', 0) + ov.get('autre_cooperative', 0)) if ov else None,
                 'illegal': zn.get('illegal') if zn else None,
                 'last_activity': last, 'coop_account_id': str(accounts[c.id]) if c.id in accounts else None,
             })
         return Response({'cooperatives': rows})
+
+
+class AnalyticsView(APIView):
+    """
+    GET /api/v1/dashboard/analytics/?campaign=2026-2027[&cooperative=<id>]
+    Coopérative : la sienne. Super admin : ses coopératives (ou l'une d'elles), avec le détail par coopérative.
+    Propriétaire : toute la plateforme (ou une coopérative).
+    """
+    permission_classes = [IsCooperativeOrAdmin]
+
+    def get(self, request):
+        import re
+        import uuid
+        from .analytics import analytics
+        user = request.user
+        coop_id = request.query_params.get('cooperative')
+        campaign = request.query_params.get('campaign')
+        if campaign and not re.fullmatch(r'\d{4}-\d{4}', campaign):
+            return Response({'detail': 'Campagne invalide (format 2026-2027).'}, status=400)
+        if coop_id:
+            try:
+                uuid.UUID(coop_id)
+            except ValueError:
+                return Response({'detail': 'Coopérative invalide.'}, status=400)
+        if user.role == 'cooperative':
+            ids = [user.cooperative_id] if user.cooperative_id else []
+        else:
+            qs = managed_cooperatives(user)
+            if coop_id:
+                qs = qs.filter(pk=coop_id)
+            ids = list(qs.values_list('id', flat=True))
+        if not ids:
+            return Response({'detail': 'Aucune coopérative accessible.'}, status=404)
+        multi = user.role != 'cooperative' and not coop_id
+        return Response(analytics(ids, campaign, with_breakdown=multi))

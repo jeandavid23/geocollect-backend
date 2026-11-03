@@ -112,9 +112,10 @@ def assign_deliveries(lot, deliveries):
 
 def _areas(coop, producer_ids):
     """Surface par producteur et sa source : parcelles cartographiées > anciens polygones > surface déclarée."""
-    mapped = dict(Parcel.objects.filter(cooperative=coop, producer_id__in=producer_ids)
+    scope = {} if coop is None else {'cooperative': coop}          # None : producteurs de plusieurs coopératives
+    mapped = dict(Parcel.objects.filter(producer_id__in=producer_ids, **scope)
                   .values('producer_id').annotate(a=Sum('area_hectares')).values_list('producer_id', 'a'))
-    legacy = dict(LegacyParcel.objects.filter(cooperative=coop, producer_id__in=producer_ids)
+    legacy = dict(LegacyParcel.objects.filter(producer_id__in=producer_ids, **scope)
                   .values('producer_id').annotate(a=Sum('area_hectares')).values_list('producer_id', 'a'))
     declared = dict(Producer.objects.filter(id__in=producer_ids).values_list('id', 'total_area_ha'))
     out = {}

@@ -7,4 +7,5 @@ urlpatterns = [
     path('coop/', views.CoopDashboardView.as_view(), name='coop_dashboard'),
     path('coop/actions/', views.CoopActionsView.as_view(), name='coop_actions'),
     path('agent/', views.AgentDashboardView.as_view(), name='agent_dashboard'),
+    path('analytics/', views.AnalyticsView.as_view(), name='analytics'),
 ]

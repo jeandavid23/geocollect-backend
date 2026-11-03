@@ -40,6 +40,15 @@ def _serialize(p):
     }
 
 
+
+def _area_ha(geom):
+    """Surface géodésique (ha) d'un polygone importé sans surface : une parcelle compte aussi par sa surface."""
+    try:
+        from eudr_evidence.geometry import geodesic_area_ha
+        return round(geodesic_area_ha(geom), 4) if geom.get('type') in ('Polygon', 'MultiPolygon') else None
+    except Exception:  # noqa: BLE001 — géométrie illisible : surface inconnue
+        return None
+
 class LegacyParcelListView(APIView):
     """
     GET    /api/v1/parcels/legacy/                     → tous les anciens polygones visibles
@@ -112,7 +121,7 @@ class LegacyParcelImportView(APIView):
                 name=str(f.get('name') or '')[:255],
                 geometry=geom,
                 properties=props if isinstance(props, dict) else {},
-                area_hectares=float(area) if isinstance(area, (int, float)) else None,
+                area_hectares=float(area) if isinstance(area, (int, float)) and area > 0 else _area_ha(geom),
                 source_file=source,
                 uploaded_by=request.user,
             ))

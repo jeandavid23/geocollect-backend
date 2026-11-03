@@ -217,3 +217,16 @@ class TraceabilityTests(TraceBase):
         restore(Trash.objects.get())                                          # tout revient depuis la corbeille
         self.assertEqual((Delivery.objects.count(), TransportSlip.objects.count(), Lot.objects.count()), (1, 1, 1))
         self.assertEqual(str(Delivery.objects.get().lot_id), lot['id'])
+
+    def test_anciens_polygones_comptent_comme_parcelles_d_origine(self):
+        from apps.parcels.models import LegacyParcel
+        seul = Producer.objects.create(cooperative=self.coop, field_id_base='P7', last_name='ANCIEN')
+        LegacyParcel.objects.create(cooperative=self.coop, producer=seul, code='P7-A', geometry=SQ, area_hectares=3.0)
+        d = self.weigh(seul, gross=1010, bags=10).json()
+        lot = self.lot_from([d['id']]).json()
+        c = lot['checks']
+        self.assertEqual(c['blocking'], 0)                                   # plus « aucune parcelle cartographiée »
+        self.assertEqual([p['field_id'] for p in c['parcels']], ['P7-A'])
+        self.assertEqual(c['parcels'][0]['eudr_status'], 'ancien')
+        self.assertEqual(c['total_area_ha'], 3.0)
+        self.assertEqual(c['producers'][0]['yield_kg_ha'], 333)

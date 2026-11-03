@@ -14,7 +14,7 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import ActivityLog
 from apps.accounts.permissions import IsCooperativeOrAdmin, module_required, resolve_cooperative, scope_to_cooperative
-from apps.parcels.models import Parcel
+from apps.parcels.models import LegacyParcel, Parcel
 from . import processing, traceability as tr
 from .models import Delivery, Lot
 from .serializers import LotSerializer
@@ -28,6 +28,12 @@ def checks(lot):
     pids = [l.producer_id for l in lines]
     parcels = list(Parcel.objects.filter(producer_id__in=pids, cooperative=lot.cooperative)
                    .values('id', 'producer_id', 'field_id', 'village', 'area_hectares', 'eudr_status', 'eudr_score', 'geometry'))
+    # anciens polygones rattachés aux producteurs : ce sont aussi des parcelles d'origine (statut « ancien »,
+    # non évalué par le contrôle EUDR de GeoCollect, donc ni conforme ni bloquant)
+    parcels += [{**p, 'field_id': p['code'] or p['name'] or str(p['id'])[:8], 'village': p['producer__village'] or '',
+                 'eudr_status': 'ancien', 'eudr_score': None}
+                for p in LegacyParcel.objects.filter(producer_id__in=pids, cooperative=lot.cooperative)
+                .values('id', 'producer_id', 'code', 'name', 'producer__village', 'area_hectares', 'geometry')]
     by_prod = defaultdict(list)
     for p in parcels:
         by_prod[p['producer_id']].append(p)
@@ -46,7 +52,7 @@ def checks(lot):
         ps = by_prod.get(pid, [])
         area = sum(p['area_hectares'] or 0 for p in ps)
         bad = [p['field_id'] for p in ps if p['eudr_status'] == 'non_compliant']
-        pending = [p['field_id'] for p in ps if p['eudr_status'] not in ('compliant', 'non_compliant')]
+        pending = [p['field_id'] for p in ps if p['eudr_status'] not in ('compliant', 'non_compliant', 'ancien')]
         yld = weight[pid] / area if area else None
         name = line.producer.full_name
         if not ps:
