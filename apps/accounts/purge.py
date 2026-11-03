@@ -129,6 +129,10 @@ def purge(user, deleted_by=None):
     label = f'{user.full_name or user.username} ({user.get_role_display()})'
     snap = _Snapshot()
     with transaction.atomic():
+        # statistiques d'utilisation : effacées sans copie à la corbeille (volumineuses, sans valeur à restaurer)
+        from django.db.models import Q
+        from apps.usage.models import PageView
+        PageView.objects.filter(Q(user=user) | Q(user__cooperative_id__in=ids) | Q(user__plant__managed_by=user)).delete()
         if agent is not None:
             snap.delete(Parcel.objects.filter(agent=agent))
         snap.delete(LegacyParcel.objects.filter(uploaded_by=user))

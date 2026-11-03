@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'apps.contact',
     'apps.lots',
     'apps.duediligence',
+    'apps.usage',
 ]
 
 MIDDLEWARE = [
@@ -163,7 +164,8 @@ REST_FRAMEWORK = {
         'login': '10/min',        # tentatives de connexion par adresse IP
         'password': '5/min',
         'message': '10/min',
-        'demo': '5/hour',          # formulaire public « Demander une démo »
+        'demo': '5/hour',
+        'usage': '30/min',         # pages vues, envoyées par lots          # formulaire public « Demander une démo »
     },
 }
 
