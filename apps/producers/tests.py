@@ -177,12 +177,16 @@ class EstimatedProductionTests(TestCase):
 
     def test_lecture_de_la_colonne_du_registre(self):
         from .production import from_extra, to_kg
-        self.assertEqual(from_extra({'Total estimate production (current year)': '1 250,5'}), 1250.5)
-        self.assertEqual(from_extra({'Total estimate production (previous year)': 900,
-                                     'Total estimate production (current year)': 1100}), 1100)
-        self.assertEqual(from_extra({'Production estimée (tonnes)': '1,2'}), 1200.0)
+        # le registre est en tonnes : « 1,25 » = 1 250 kg
+        self.assertEqual(from_extra({'Total estimate production (current year)': '1,25'}), 1250.0)
+        self.assertEqual(from_extra({'Total estimate production (current year)': 2}), 2000.0)
+        self.assertEqual(from_extra({'Total estimate production (previous year)': 0.9,
+                                     'Total estimate production (current year)': 1.1}), 1100.0)
+        self.assertEqual(from_extra({'Production estimée (tonnes)': '150'}), 150000.0)      # unité explicite
         self.assertEqual(from_extra({'Estimated production': 'n/a', 'Production estimée (kg)': 800}), 800)
+        self.assertEqual(from_extra({'Total estimate production (current year)': 1800}), 1800.0)   # > 100 : déjà en kg
         self.assertIsNone(from_extra({'Superficie': 3}))
         self.assertEqual(to_kg('2.500.000'), 2500000.0)
         self.assertEqual(to_kg('1.250,5'), 1250.5)
         self.assertEqual(to_kg('1,250.5'), 1250.5)
+        self.assertEqual(to_kg('1,5'), 1500.0)

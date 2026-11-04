@@ -237,12 +237,12 @@ class EstimatedCapacityTests(TraceBase):
 
     def test_import_du_registre(self):
         r = self.c.post('/api/v1/producers/bulk/', {'use_codes': True, 'producers': [
-            {'code': 'P9', 'last_name': 'N', 'extra_data': {'Total estimate production (current year)': '1 800'}}]},
+            {'code': 'P9', 'last_name': 'N', 'extra_data': {'Total estimate production (current year)': '1,8'}}]},   # tonnes
             format='json', **H)
         self.assertEqual(r.status_code, 201, r.content)
         self.assertEqual(float(Producer.objects.get(field_id_base='P9').estimated_production_kg), 1800.0)
         self.c.post('/api/v1/producers/bulk/', {'use_codes': True, 'producers': [               # réimport : mise à jour
-            {'code': 'P9', 'extra_data': {'Total estimate production (current year)': 2100}}]}, format='json', **H)
+            {'code': 'P9', 'extra_data': {'Total estimate production (current year)': 2.1}}]}, format='json', **H)
         self.assertEqual(float(Producer.objects.get(field_id_base='P9').estimated_production_kg), 2100.0)
 
     def test_volumes_compares_a_l_estimation(self):

@@ -7,6 +7,9 @@ import re
 import unicodedata
 
 MAX_KG = 10 ** 8
+# Unité : le registre exprime la production estimée en tonnes. Sans unité dans l'entête, une valeur jusqu'à
+# MAX_TONNES est lue en tonnes (aucun producteur ne dépasse 100 t), au-delà en kg (ancien fichier en kg).
+MAX_TONNES = 100
 CURRENT = ('current', 'en cours', 'actuel', 'cette annee', 'this year')
 PREVIOUS = ('previous', 'last year', 'precedent', 'derniere', 'n 1', 'n-1')
 
@@ -22,7 +25,7 @@ def is_estimate_header(header):
 
 
 def to_kg(value, header=''):
-    """'1 250,5' → 1250.5 ; en tonnes si l'entête l'indique. None si illisible."""
+    """'1,25' (tonnes) → 1250.0 ; '1 250 kg' → 1250.0. None si illisible (voir MAX_TONNES pour l'unité)."""
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -33,7 +36,9 @@ def to_kg(value, header=''):
         except ValueError:
             return None
     h = normalize(header)
-    if re.search(r'\b(tonnes?|t)\b', h):
+    in_kg = re.search(r'\bkgs?\b|kilo', h)
+    in_tonnes = re.search(r'\b(tonnes?|tons?|t)\b', h)
+    if in_tonnes or (not in_kg and n <= MAX_TONNES):
         n *= 1000
     return round(n, 1) if 0 <= n < MAX_KG else None
 

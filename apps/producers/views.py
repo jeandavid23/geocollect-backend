@@ -189,8 +189,9 @@ class ProducerBulkImportView(APIView):
             if n is not None:
                 data['total_area_ha'] = n
         extra = row.get('extra_data') if isinstance(row.get('extra_data'), dict) else {}
-        estimate = to_kg(row.get('estimated_production_kg')) if row.get('estimated_production_kg') not in (None, '') \
-            else from_extra(extra)
+        estimate = from_extra(extra)                    # entête d'origine : il porte l'unité
+        if estimate is None and row.get('estimated_production_kg') not in (None, ''):
+            estimate = to_kg(row['estimated_production_kg'])
         if estimate is not None:
             data['estimated_production_kg'] = estimate
         data['gender'] = 'F' if str(row.get('gender', '')).upper().startswith('F') else 'M'
