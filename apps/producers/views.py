@@ -4,8 +4,9 @@ from rest_framework import generics, filters, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import Agent, Producer
+from .models import Agent, Producer, RegistryParcel
 from .production import from_extra, to_kg
+from .registry import registry_groups, save_registry_parcels
 from .serializers import AgentSerializer, AgentCreateSerializer, ProducerSerializer, ProducerCreateSerializer
 from apps.accounts.permissions import IsSuperAdmin, IsCooperativeOrAdmin, IsAgentOrAbove, resolve_cooperative, scope_to_cooperative, is_owner
 from utils.field_id import generate_field_id_base, get_next_producer_index
@@ -84,11 +85,15 @@ class ProducerListCreateView(generics.ListCreateAPIView):
         from django.db.models import IntegerField, OuterRef, Subquery, Value
         from django.db.models.functions import Coalesce
         from apps.parcels.models import LegacyParcel
+        from .models import RegistryParcel
         legacy = (LegacyParcel.objects.filter(producer=OuterRef('pk')).order_by().values('producer')
                   .annotate(n=Count('id')).values('n'))
+        registry = (RegistryParcel.objects.filter(producer=OuterRef('pk')).order_by().values('producer')
+                    .annotate(n=Count('id')).values('n'))
         qs = (Producer.objects.select_related('cooperative', 'assigned_agent__user')
               .annotate(parcel_count_annot=Count('parcels'), total_hectares_annot=Sum('parcels__area_hectares'),
-                        legacy_count_annot=Coalesce(Subquery(legacy, output_field=IntegerField()), Value(0)))
+                        legacy_count_annot=Coalesce(Subquery(legacy, output_field=IntegerField()), Value(0)),
+                        registry_count_annot=Coalesce(Subquery(registry, output_field=IntegerField()), Value(0)))
               .order_by('last_name', 'first_name', 'id'))
         # ?to_map=true : producteurs sans aucun polygone (registre sans correspondance) → à cartographier par les agents
         tm = self.request.query_params.get('to_map')
@@ -221,7 +226,7 @@ class ProducerBulkImportView(APIView):
 
         # use_codes : le fichier a une colonne « code producteur » → aucune ligne sans code n'est acceptée
         use_codes = bool(request.data.get('use_codes'))
-        valid, errors, raw_codes = [], [], []
+        valid, errors, raw_codes, raw_parcels = [], [], [], []
         for i, row in enumerate(rows):
             if not isinstance(row, dict):
                 errors.append({'index': i, 'errors': {'detail': 'Ligne invalide.'}})
@@ -233,6 +238,7 @@ class ProducerBulkImportView(APIView):
                 continue
             valid.append(self._clean(row, limits))
             raw_codes.append(code)
+            raw_parcels.append(clean_code(row.get('parcel_code'), 60))
 
         created, updated = [], []
         if valid:
@@ -240,21 +246,17 @@ class ProducerBulkImportView(APIView):
             with transaction.atomic():
                 # 1) Lignes avec le code du registre : ce code EST l'identifiant du producteur (jamais régénéré).
                 #    Un code déjà connu dans la coopérative met à jour le producteur au lieu d'en créer un doublon.
-                coded = [(d, raw_codes[k]) for k, d in enumerate(valid) if raw_codes[k]]
+                coded = [(d, raw_codes[k], raw_parcels[k]) for k, d in enumerate(valid) if raw_codes[k]]
                 # code déjà connu, même écrit autrement (« BA_SE_354 » = « BA-SE-354 ») : mise à jour, pas de doublon
-                keys = {normalize_code(c) for _, c in coded}
+                keys = {normalize_code(c) for _, c, _ in coded}
                 existing = {}
                 for p in Producer.objects.filter(cooperative=cooperative).filter(
-                        Q(field_id_base__in=[c for _, c in coded]) | Q(match_key__in=keys)):
+                        Q(field_id_base__in=[c for _, c, _ in coded]) | Q(match_key__in=keys)):
                     existing.setdefault(p.match_key, p)
-                seen = set()
-                objs = []
-                for data, code in coded:
-                    key = normalize_code(code)
-                    if key in seen:
-                        errors.append({'index': None, 'errors': {'code': f'Code {code} en double dans le fichier : seule la 1re ligne est prise.'}})
-                        continue
-                    seen.add(key)
+                # une ligne par parcelle : les lignes d'un même code producteur forment un seul producteur
+                groups, parcel_rows = registry_groups(coded, errors)
+                objs, by_key = [], {}
+                for key, (data, code) in groups.items():
                     p = existing.get(key)
                     if p is not None:
                         extra = {**(p.extra_data or {}), **data.pop('extra_data', {})}
@@ -263,10 +265,12 @@ class ProducerBulkImportView(APIView):
                         p.extra_data = extra
                         updated.append(p)
                     else:
-                        objs.append(Producer(cooperative=cooperative, assigned_agent=agent, field_id_base=code,
-                                             match_key=normalize_code(code) or '', **data))
+                        p = Producer(cooperative=cooperative, assigned_agent=agent, field_id_base=code,
+                                     match_key=normalize_code(code) or '', **data)
+                        objs.append(p)
+                    by_key[key] = p
                 if updated:
-                    Producer.objects.bulk_update(updated, list({k for d, _ in coded for k in d} | {'extra_data'}), batch_size=500)
+                    Producer.objects.bulk_update(updated, list({k for d, _, _ in coded for k in d} | {'extra_data'}), batch_size=500)
 
                 # 2) Fichier sans colonne « code » : identifiant généré comme avant (ancien comportement)
                 uncoded = [d for k, d in enumerate(valid) if not raw_codes[k]]
@@ -292,12 +296,13 @@ class ProducerBulkImportView(APIView):
                         objs.append(Producer(cooperative=cooperative, assigned_agent=agent, field_id_base=base,
                                              match_key=normalize_code(base) or '', **data))
                 created = Producer.objects.bulk_create(objs, batch_size=1000)
+                save_registry_parcels(cooperative, parcel_rows, by_key)
 
             # producteurs du registre ↔ anciens polygones (code)
             match = None
             if request.data.get('relink', True):
                 from .matching import relink
-                match = relink(cooperative, request.data.get('code_field') or None)
+                match = relink(cooperative, request.data.get('code_field') or None, request.data.get('parcel_field') or None)
 
             try:
                 from apps.accounts.notify import notify_cooperative
@@ -310,9 +315,12 @@ class ProducerBulkImportView(APIView):
                 pass
 
         # Réponse sans requête supplémentaire : les nouveaux producteurs n'ont encore aucune parcelle
+        registry_counts = dict(RegistryParcel.objects.filter(producer__in=created).values_list('producer')
+                               .annotate(n=Count('id')).values_list('producer', 'n')) if created else {}
         for p in created:
             p.parcel_count_annot = 0
             p.total_hectares_annot = 0
+            p.registry_count_annot = registry_counts.get(p.id, 0)
         for p in updated:
             p.parcel_count_annot = None
             p.total_hectares_annot = None
@@ -327,7 +335,8 @@ class ProducerBulkImportView(APIView):
 class ProducerMatchView(APIView):
     """
     GET  /api/v1/producers/match/?cooperative=   état du croisement registre ↔ polygones + attributs disponibles
-    POST /api/v1/producers/match/  {"code_field": "<attribut des polygones>" | null}   recalcule les liens
+    POST /api/v1/producers/match/  {"code_field": "<attribut code producteur>" | null, "parcel_field": "<attribut code
+                                    parcelle>" | null}   recalcule les liens polygone → parcelle du registre → producteur
     """
     permission_classes = [IsCooperativeOrAdmin]
 
@@ -351,7 +360,7 @@ class ProducerMatchView(APIView):
         coop = self._coop(request)
         if coop is None:
             return Response({'detail': 'Coopérative requise.'}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(relink(coop, request.data.get('code_field') or None))
+        return Response(relink(coop, request.data.get('code_field') or None, request.data.get('parcel_field') or None))
 
 
 class ProducerBulkDeleteView(APIView):

@@ -91,6 +91,10 @@ class LegacyParcel(models.Model):
     code = models.CharField(max_length=100, blank=True, verbose_name='Code (attributs)')
     match_key = models.CharField(max_length=110, blank=True, db_index=True, editable=False)
     producer = models.ForeignKey('producers.Producer', null=True, blank=True, on_delete=models.SET_NULL, related_name='legacy_parcels')
+    # code parcelle lu dans les attributs → parcelle du registre (rattachement le plus précis)
+    parcel_code = models.CharField(max_length=100, blank=True, verbose_name='Code parcelle (attributs)')
+    registry_parcel = models.ForeignKey('producers.RegistryParcel', null=True, blank=True, on_delete=models.SET_NULL,
+                                        related_name='polygons')
     uploaded_by = models.ForeignKey('accounts.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
 

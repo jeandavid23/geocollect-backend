@@ -135,6 +135,50 @@ class CodeIndex:
         return None, 'absent'
 
 
+class ParcelIndex:
+    """Parcelles du registre d'une coopérative : code parcelle → (parcelle du registre, producteur)."""
+
+    def __init__(self, rows):
+        self.levels = [{}, {}, {}]   # exact, sans zéros, sans séparateurs
+        for key, rid, pid in rows:
+            if key:
+                for idx, k in zip(self.levels, (key, _no_zeros(key), _compact(key))):
+                    idx.setdefault(k, set()).add((rid, pid))
+
+    @classmethod
+    def for_cooperative(cls, cooperative):
+        from .models import RegistryParcel
+        return cls(RegistryParcel.objects.filter(cooperative=cooperative).values_list('match_key', 'id', 'producer_id'))
+
+    def lookup(self, key):
+        """(parcelle, producteur) si le code désigne UNE parcelle du registre, sinon None."""
+        if not key:
+            return None
+        for idx, form in zip(self.levels, (key, _no_zeros(key), _compact(key))):
+            hits = idx.get(form)
+            if hits:
+                return next(iter(hits)) if len(hits) == 1 else None
+        return None
+
+
+def resolve(code_key, parcel_key, parcels, producers):
+    """
+    (parcelle du registre, producteur, état) d'un polygone : le code parcelle désigne la parcelle du registre (et donc
+    son producteur) ; à défaut, le code producteur — ou le code parcelle sans son suffixe — désigne le producteur.
+    """
+    for key in (parcel_key, code_key):
+        hit = parcels.lookup(key)
+        if hit:
+            return hit[0], hit[1], 'ok'
+    state = 'absent'
+    for key in (code_key, parcel_key):
+        if key:
+            pid, state = producers.lookup(key)
+            if pid:
+                return None, pid, 'ok'
+    return None, None, state
+
+
 def producer_for(key, index):
     """Producteur d'un code de polygone (index : CodeIndex, ou dict {match_key: id})."""
     if not isinstance(index, CodeIndex):
@@ -159,28 +203,37 @@ def detect_code_field(cooperative, sample=3000):
     return best, scores[best]
 
 
-def relink(cooperative, code_field=None):
-    """Recalcule le lien polygone → producteur de toute la coopérative. Renvoie les statistiques."""
+def relink(cooperative, code_field=None, parcel_field=None):
+    """
+    Recalcule le lien polygone → parcelle du registre → producteur de toute la coopérative.
+    `parcel_field` : attribut des polygones portant le code parcelle (sinon le code parcelle déjà lu est gardé).
+    """
     from apps.parcels.models import LegacyParcel
 
     if code_field is None:
         code_field, _ = detect_code_field(cooperative)
-    index = CodeIndex.for_cooperative(cooperative)
+    producers, parcels = CodeIndex.for_cooperative(cooperative), ParcelIndex.for_cooperative(cooperative)
     changed, unmatched, ambiguous = [], [], []
-    for lp in LegacyParcel.objects.filter(cooperative=cooperative).only('id', 'properties', 'code', 'match_key', 'producer_id').iterator(chunk_size=2000):
-        raw = (lp.properties or {}).get(code_field) if code_field else lp.code
+    fields = ('id', 'properties', 'code', 'match_key', 'producer_id', 'parcel_code', 'registry_parcel_id')
+    for lp in LegacyParcel.objects.filter(cooperative=cooperative).only(*fields).iterator(chunk_size=2000):
+        props = lp.properties or {}
+        raw = props.get(code_field) if code_field else lp.code
         code = '' if raw is None else str(raw).strip()[:100]
+        parcel = str(props.get(parcel_field) or '').strip()[:100] if parcel_field else lp.parcel_code
         key = normalize_code(code) or ''
-        pid, state = index.lookup(key)
-        if key and state == 'absent' and len(unmatched) < 50:
-            unmatched.append(code)
+        rid, pid, state = resolve(key, normalize_code(parcel), parcels, producers)
+        label = parcel or code
+        if label and state == 'absent' and len(unmatched) < 50:
+            unmatched.append(label)
         if state == 'ambigu' and len(ambiguous) < 50:
-            ambiguous.append(code)
-        if (lp.code, lp.match_key, lp.producer_id) != (code, key, pid):
-            lp.code, lp.match_key, lp.producer_id = code, key, pid
+            ambiguous.append(label)
+        new = (code, key, pid, parcel, rid)
+        if (lp.code, lp.match_key, lp.producer_id, lp.parcel_code, lp.registry_parcel_id) != new:
+            lp.code, lp.match_key, lp.producer_id, lp.parcel_code, lp.registry_parcel_id = new
             changed.append(lp)
     with transaction.atomic():
-        LegacyParcel.objects.bulk_update(changed, ['code', 'match_key', 'producer'], batch_size=1000)
+        LegacyParcel.objects.bulk_update(changed, ['code', 'match_key', 'producer', 'parcel_code', 'registry_parcel'],
+                                         batch_size=1000)
     return {**stats(cooperative, code_field), 'unmatched_codes': unmatched, 'ambiguous_codes': ambiguous}
 
 
@@ -206,4 +259,15 @@ def stats(cooperative, code_field=None):
         'code_field': code_field, 'producers': total, 'mapped_producers': total - to_map, 'to_map': to_map,
         'polygons_per_producer': dist, 'legacy_polygons': lp['total'], 'linked_polygons': lp['linked'],
         'orphan_polygons': lp['total'] - lp['linked'], 'polygons_without_code': lp['nocode'],
+        **_registry_stats(cooperative),
     }
+
+
+def _registry_stats(cooperative):
+    """Parcelles du registre, et combien ont au moins un polygone rattaché par leur code parcelle."""
+    from django.db.models import Count, Q
+    from .models import RegistryParcel
+    r = RegistryParcel.objects.filter(cooperative=cooperative).aggregate(
+        n=Count('id'), with_polygon=Count('id', filter=Q(polygons__isnull=False), distinct=True))
+    return {'registry_parcels': r['n'], 'registry_parcels_with_polygon': r['with_polygon'],
+            'registry_parcels_without_polygon': r['n'] - r['with_polygon']}

@@ -135,3 +135,28 @@ class Producer(models.Model):
     def total_hectares(self):
         result = self.parcels.aggregate(total=models.Sum('area_hectares'))
         return round(result['total'] or 0, 2)
+
+
+class RegistryParcel(models.Model):
+    """
+    Parcelle déclarée au registre : une ligne du registre (code producteur + code parcelle). Les polygones importés
+    s'y rattachent par le code parcelle, sinon au producteur par le code producteur.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    cooperative = models.ForeignKey('cooperatives.Cooperative', on_delete=models.CASCADE, related_name='registry_parcels')
+    producer = models.ForeignKey(Producer, on_delete=models.CASCADE, related_name='registry_parcels')
+    parcel_code = models.CharField(max_length=60, verbose_name='Code parcelle (registre)')
+    match_key = models.CharField(max_length=70, db_index=True, editable=False)
+    area_ha = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='Superficie (ha)')
+    estimated_production_kg = models.DecimalField(max_digits=12, decimal_places=1, null=True, blank=True,
+                                                  verbose_name='Production estimée (kg)')
+    extra_data = models.JSONField(default=dict, blank=True, verbose_name='Colonnes du registre')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['parcel_code']
+        verbose_name = 'Parcelle du registre'
+        constraints = [models.UniqueConstraint(fields=['cooperative', 'match_key'], name='registry_parcel_unique_code')]
+
+    def __str__(self):
+        return self.parcel_code

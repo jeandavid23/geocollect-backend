@@ -36,6 +36,9 @@ def _serialize(p):
         'properties': p.properties,
         'area_hectares': p.area_hectares,
         'source_file': p.source_file,
+        'code': p.code, 'parcel_code': p.parcel_code,
+        'producer': str(p.producer_id) if p.producer_id else None,
+        'registry_parcel': str(p.registry_parcel_id) if p.registry_parcel_id else None,
         'created_at': p.created_at.isoformat(),
     }
 
@@ -126,16 +129,18 @@ class LegacyParcelImportView(APIView):
                 uploaded_by=request.user,
             ))
 
-        # code producteur / code parcelle lu dans les attributs → rattachement au producteur du registre
+        # code producteur et code parcelle lus dans les attributs → parcelle du registre, sinon producteur
         code_field = str(request.data.get('code_field') or '').strip()
-        if code_field:
-            from apps.producers.matching import normalize_code, CodeIndex
-            index = CodeIndex.for_cooperative(cooperative)
+        parcel_field = str(request.data.get('parcel_field') or '').strip()
+        if code_field or parcel_field:
+            from apps.producers.matching import CodeIndex, ParcelIndex, normalize_code, resolve
+            producers, parcels = CodeIndex.for_cooperative(cooperative), ParcelIndex.for_cooperative(cooperative)
             for o in objs:
-                raw = o.properties.get(code_field)
+                raw = o.properties.get(code_field) if code_field else None
                 o.code = '' if raw is None else str(raw).strip()[:100]
                 o.match_key = normalize_code(o.code) or ''
-                o.producer_id = index.lookup(o.match_key)[0]
+                o.parcel_code = str(o.properties.get(parcel_field) or '').strip()[:100] if parcel_field else ''
+                o.registry_parcel_id, o.producer_id, _ = resolve(o.match_key, normalize_code(o.parcel_code), parcels, producers)
 
         with transaction.atomic():
             if request.data.get('replace') and source:
@@ -144,7 +149,8 @@ class LegacyParcelImportView(APIView):
 
         # une seule notification par fichier : au premier lot (replace) uniquement
         if not request.data.get('notify', True):
-            return Response({'created': len(objs), 'skipped': skipped, 'linked': sum(1 for o in objs if o.producer_id)},
+            return Response({'created': len(objs), 'skipped': skipped, 'linked': sum(1 for o in objs if o.producer_id),
+                             'linked_to_parcel': sum(1 for o in objs if o.registry_parcel_id)},
                         status=status.HTTP_201_CREATED)
         try:
             from apps.accounts.notify import notify_cooperative
@@ -156,7 +162,8 @@ class LegacyParcelImportView(APIView):
         except Exception:
             pass
 
-        return Response({'created': len(objs), 'skipped': skipped}, status=status.HTTP_201_CREATED)
+        return Response({'created': len(objs), 'skipped': skipped, 'linked': sum(1 for o in objs if o.producer_id),
+                         'linked_to_parcel': sum(1 for o in objs if o.registry_parcel_id)}, status=status.HTTP_201_CREATED)
 
 
 class LegacyParcelSourcesView(APIView):
